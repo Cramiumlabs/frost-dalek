@@ -671,17 +671,17 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 extern crate alloc;
 
-#[cfg(not(feature = "std"))]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 mod panic;
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 pub mod heap;
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-pub use heap::init_heap;
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
+pub use {heap::init_heap, heap::heap_stats};
 
 #[cfg(all(test, feature = "std"))]
 #[macro_use]
@@ -692,12 +692,24 @@ pub mod nizk;
 pub mod parameters;
 pub mod precomputation;
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub mod signature;
 
 pub use keygen::*;
 pub use parameters::*;
 pub use precomputation::generate_commitment_share_lists;
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub use signature::*;
+
+#[cfg(all(test, feature = "force-alloc", feature = "std"))]
+mod test_init {
+    use super::*;
+    use ctor::ctor;
+
+    #[ctor]
+    fn init_allocator_before_tests() {
+        init_heap();
+        eprintln!("[ctor] custom allocator initialized before tests");
+    }
+}

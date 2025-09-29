@@ -1,27 +1,39 @@
+// Updated allocator code
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 extern crate alloc;
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 use linked_list_allocator::LockedHeap;
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
-const RUST_HEAP_SIZE: usize = 256 * 1024; // 256 KB
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
+const RUST_HEAP_SIZE: usize = 256 * 1024;
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
+#[no_mangle]
+#[used]
 #[link_section = ".bss.rust_heap"]
 static mut RUST_HEAP: [u8; RUST_HEAP_SIZE] = [0; RUST_HEAP_SIZE];
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
-#[cfg(all(feature = "alloc", not(feature = "std")))]
+// We can only call this function one time
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 pub fn init_heap() {
     unsafe {
         ALLOCATOR
             .lock()
             .init(RUST_HEAP.as_ptr() as *mut u8, RUST_HEAP_SIZE);
+    }
+}
+
+#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
+pub fn heap_stats() -> (usize, usize, usize) {
+    unsafe {
+        let alloc = ALLOCATOR.lock();
+        (alloc.size(), alloc.used(), alloc.free())
     }
 }

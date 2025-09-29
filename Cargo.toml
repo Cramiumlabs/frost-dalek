@@ -17,6 +17,11 @@ exclude = [ ".gitignore" ]
 crate-type = ["rlib", "staticlib"]
 doctest = false
 
+[[bin]]
+name = "frost-cli"
+path = "src/main.rs"
+test = false
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "/opt/rustwide/workdir/docs/assets/rustdoc-include-katex-header.html"]
 
@@ -27,15 +32,19 @@ sha2 = { version = "0.9", default-features = false }
 subtle = { version = "2.4", default-features = false }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
 linked_list_allocator = { version = "0.10"}
+hashbrown = { version = "0.14", default-features = false, features = ["ahash", "alloc"] }
+
 
 [dev-dependencies]
 rand = {version = "0.7", default-features = false }
 criterion = { version = "0.3" }
 ed25519-dalek = { version = "1", default-features = false, features = ["alloc", "u64_backend"] }
 linked_list_allocator = { version = "0.10"}
+ctor = "0.2"
+
 
 [features]
-default = ["std", "u64_backend"]
+default = ["std", "u64_backend","force-alloc"]
 
 alloc = [
     "curve25519-dalek/alloc",
@@ -66,3 +75,5 @@ std = [
     "curve25519-dalek/std",
     "ed25519-dalek/std"
 ]
+
+force-alloc = []

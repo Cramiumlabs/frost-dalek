@@ -9,19 +9,29 @@
 
 //! FROST signatures and their creation.
 
-#[cfg(feature = "alloc")]
+// Box
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::boxed::Box;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::boxed::Box;
 
-#[cfg(feature = "std")]
+// Ordering
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+use core::cmp::Ordering;
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::cmp::Ordering;
-#[cfg(feature = "std")]
-use std::collections::hash_map::Values;
-#[cfg(feature = "std")]
-use std::collections::HashMap;
-#[cfg(feature = "std")]
+
+// Vec
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+use alloc::vec::Vec;
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::vec::Vec;
+
+// HashMap + Values
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+use hashbrown::{hash_map::Values, HashMap};
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
+use std::collections::{hash_map::Values, HashMap};
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::CompressedRistretto;

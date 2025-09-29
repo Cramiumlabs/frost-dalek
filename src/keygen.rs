@@ -1,13 +1,13 @@
 use core::cmp::Ordering;
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::boxed::Box;
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::vec::Vec;
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::boxed::Box;
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
@@ -15,8 +15,6 @@ use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
-
-use rand_core::{CryptoRng, RngCore};
 
 use zeroize::Zeroize;
 
