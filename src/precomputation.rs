@@ -10,7 +10,7 @@
 //! Precomputation for one-round signing.
 
 #[cfg(feature = "std")]
-use std::vec::Vec;
+use std::boxed::Box;
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -20,8 +20,7 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
 
-use rand::CryptoRng;
-use rand::Rng;
+use rand_core::{CryptoRng, RngCore};
 
 use subtle::Choice;
 use subtle::ConstantTimeEq;
@@ -33,7 +32,7 @@ use zeroize::Zeroize;
 pub(crate) struct NoncePair(pub(crate) Scalar, pub(crate) Scalar);
 
 impl NoncePair {
-    pub fn new(mut csprng: impl CryptoRng + Rng) -> Self {
+    pub fn new(mut csprng: impl CryptoRng + RngCore) -> Self {
         NoncePair(Scalar::random(&mut csprng), Scalar::random(&mut csprng))
     }
 }
@@ -81,8 +80,7 @@ impl Drop for Commitment {
 /// Test equality in constant-time.
 impl ConstantTimeEq for Commitment {
     fn ct_eq(&self, other: &Commitment) -> Choice {
-        self.nonce.ct_eq(&other.nonce) &
-            self.sealed.compress().ct_eq(&other.sealed.compress())
+        self.nonce.ct_eq(&other.nonce) & self.sealed.compress().ct_eq(&other.sealed.compress())
     }
 }
 
@@ -147,11 +145,10 @@ pub struct PublicCommitmentShareList {
 ///
 /// A tuple of ([`PublicCommitmentShareList`], [`SecretCommitmentShareList`]).
 pub fn generate_commitment_share_lists(
-    mut csprng: impl CryptoRng + Rng,
+    mut csprng: impl CryptoRng + RngCore,
     participant_index: u32,
     number_of_shares: usize,
-) -> (PublicCommitmentShareList, SecretCommitmentShareList)
-{
+) -> (PublicCommitmentShareList, SecretCommitmentShareList) {
     let mut commitments: Vec<CommitmentShare> = Vec::with_capacity(number_of_shares);
 
     for _ in 0..number_of_shares {
@@ -164,8 +161,13 @@ pub fn generate_commitment_share_lists(
         published.push(commitment.publish());
     }
 
-    (PublicCommitmentShareList { participant_index, commitments: published },
-     SecretCommitmentShareList { commitments })
+    (
+        PublicCommitmentShareList {
+            participant_index,
+            commitments: published,
+        },
+        SecretCommitmentShareList { commitments },
+    )
 }
 
 // XXX TODO This should maybe be a field on SecretKey with some sort of
@@ -212,15 +214,20 @@ mod test {
 
     #[test]
     fn commitment_share_list_generate() {
-        let (public_share_list, secret_share_list) = generate_commitment_share_lists(&mut OsRng, 0, 5);
+        let (public_share_list, secret_share_list) =
+            generate_commitment_share_lists(&mut OsRng, 0, 5);
 
-        assert_eq!(public_share_list.commitments[0].0.compress(),
-                   (&secret_share_list.commitments[0].hiding.nonce * &RISTRETTO_BASEPOINT_TABLE).compress());
+        assert_eq!(
+            public_share_list.commitments[0].0.compress(),
+            (&secret_share_list.commitments[0].hiding.nonce * &RISTRETTO_BASEPOINT_TABLE)
+                .compress()
+        );
     }
 
     #[test]
     fn drop_used_commitment_shares() {
-        let (_public_share_list, mut secret_share_list) = generate_commitment_share_lists(&mut OsRng, 3, 8);
+        let (_public_share_list, mut secret_share_list) =
+            generate_commitment_share_lists(&mut OsRng, 3, 8);
 
         assert!(secret_share_list.commitments.len() == 8);
 

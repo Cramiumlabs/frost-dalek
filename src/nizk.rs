@@ -13,8 +13,8 @@ use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 
-use rand::CryptoRng;
-use rand::Rng;
+use rand_core::CryptoRng;
+use rand_core::RngCore;
 
 use sha2::Digest;
 use sha2::Sha512;
@@ -43,14 +43,13 @@ pub struct NizkOfSecretKey {
 
 impl NizkOfSecretKey {
     /// Prove knowledge of a secret key.
-    pub fn prove(
+    pub fn prove<R: RngCore + CryptoRng>(
         index: &u32,
         secret_key: &Scalar,
         public_key: &RistrettoPoint,
-        mut csprng: impl Rng + CryptoRng,
-    ) -> Self
-    {
-        let k: Scalar = Scalar::random(&mut csprng);
+        rng: &mut R,
+    ) -> Self {
+        let k: Scalar = Scalar::random(rng);
         let M: RistrettoPoint = &k * &RISTRETTO_BASEPOINT_TABLE;
 
         let mut hram = Sha512::new();
@@ -68,7 +67,8 @@ impl NizkOfSecretKey {
 
     /// Verify that the prover does indeed know the secret key.
     pub fn verify(&self, index: &u32, public_key: &RistrettoPoint) -> Result<(), ()> {
-        let M_prime: RistrettoPoint = (&RISTRETTO_BASEPOINT_TABLE * &self.r) + (public_key * -&self.s);
+        let M_prime: RistrettoPoint =
+            (&RISTRETTO_BASEPOINT_TABLE * &self.r) + (public_key * -&self.s);
 
         let mut hram = Sha512::new();
 
