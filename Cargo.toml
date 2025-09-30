@@ -33,10 +33,11 @@ subtle = { version = "2.4", default-features = false }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
 linked_list_allocator = { version = "0.10"}
 hashbrown = { version = "0.14", default-features = false, features = ["ahash", "alloc"] }
+rand = {version = "0.7", default-features = false, optional = true}
 
 
 [dev-dependencies]
-rand = {version = "0.7", default-features = false }
+rand = {version = "0.7", default-features = false}
 criterion = { version = "0.3" }
 ed25519-dalek = { version = "1", default-features = false, features = ["alloc", "u64_backend"] }
 linked_list_allocator = { version = "0.10"}
@@ -73,7 +74,8 @@ simd_backend = [
 
 std = [
     "curve25519-dalek/std",
-    "ed25519-dalek/std"
+    "ed25519-dalek/std",
+    "rand"
 ]
 
 force-alloc = []

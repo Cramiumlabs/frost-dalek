@@ -681,7 +681,7 @@ mod panic;
 pub mod heap;
 
 #[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
-pub use {heap::init_heap, heap::heap_stats};
+pub use {heap::heap_stats, heap::init_heap};
 
 #[cfg(all(test, feature = "std"))]
 #[macro_use]
