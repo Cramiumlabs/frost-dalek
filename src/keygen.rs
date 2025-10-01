@@ -16,6 +16,7 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
 
+use rand_core::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
 use crate::nizk::NizkOfSecretKey;
@@ -23,9 +24,15 @@ use crate::parameters::Parameters;
 
 /// A struct for holding a shard of the shared secret, in order to ensure that
 /// the shard is overwritten with zeroes when it falls out of scope.
-#[derive(Zeroize)]
-#[zeroize(drop)]
 pub struct Coefficients(pub(crate) Vec<Scalar>);
+
+impl Drop for Coefficients {
+    fn drop(&mut self) {
+        for scalar in self.0.iter_mut() {
+            *scalar = Scalar::ZERO;
+        }
+    }
+}
 
 /// A commitment to the dealer's secret polynomial coefficients for Feldman's
 /// verifiable secret sharing scheme.
@@ -70,11 +77,13 @@ impl Participant {
     /// identical.  Otherwise, the participants' secret shares could be formed
     /// with respect to different polynomials and they will fail to create
     /// threshold signatures which validate.
-    pub fn dealer<R: rand_core::RngCore + rand_core::CryptoRng>(
+    pub fn dealer<R: RngCore + CryptoRng>(
         parameters: &Parameters,
         rng: &mut R,
     ) -> (Vec<DealtParticipant>, VerifiableSecretSharingCommitment) {
-        let secret = Scalar::random(rng);
+        let mut secret_bytes = [0u8; 64];
+        rng.fill_bytes(&mut secret_bytes);
+        let secret = Scalar::from_bytes_mod_order_wide(&secret_bytes);
 
         generate_shares(parameters, secret, rng)
     }
@@ -97,7 +106,7 @@ impl Participant {
     /// A distributed key generation protocol [`Participant`] and that
     /// participant's secret polynomial `Coefficients` which must be kept
     /// private.
-    pub fn new<R: rand_core::RngCore + rand_core::CryptoRng>(
+    pub fn new<R: RngCore + CryptoRng>(
         parameters: &Parameters,
         index: u32,
         rng: &mut R,
@@ -111,7 +120,9 @@ impl Participant {
         let mut commitments: Vec<RistrettoPoint> = Vec::with_capacity(t);
 
         for _ in 0..t {
-            coefficients.push(Scalar::random(rng));
+            let mut bytes = [0u8; 64];
+            rng.fill_bytes(&mut bytes);
+            coefficients.push(Scalar::from_bytes_mod_order_wide(&bytes));
         }
 
         let coefficients = Coefficients(coefficients);
@@ -120,7 +131,7 @@ impl Participant {
         //         C_i = [\phi_{i0}, ..., \phi_{i(t-1)}], where \phi_{ij} = g^{a_{ij}},
         //         0 ≤ j ≤ t-1.
         for j in 0..t {
-            commitments.push(&coefficients.0[j] * &RISTRETTO_BASEPOINT_TABLE);
+            commitments.push(&coefficients.0[j] * RISTRETTO_BASEPOINT_TABLE);
         }
 
         // Yes, I know the steps are out of order.  It saves one scalar multiplication.
@@ -154,7 +165,7 @@ impl Participant {
     }
 }
 
-fn generate_shares<R: rand_core::RngCore + rand_core::CryptoRng>(
+fn generate_shares<R: RngCore + CryptoRng>(
     parameters: &Parameters,
     secret: Scalar,
     rng: &mut R,
@@ -171,7 +182,9 @@ fn generate_shares<R: rand_core::RngCore + rand_core::CryptoRng>(
 
     coefficients.push(secret);
     for _ in 0..t - 1 {
-        coefficients.push(Scalar::random(rng));
+        let mut bytes = [0u8; 64];
+        rng.fill_bytes(&mut bytes);
+        coefficients.push(Scalar::from_bytes_mod_order_wide(&bytes));
     }
 
     let coefficients = Coefficients(coefficients);
@@ -182,18 +195,18 @@ fn generate_shares<R: rand_core::RngCore + rand_core::CryptoRng>(
     for j in 0..t {
         commitment
             .0
-            .push(&coefficients.0[j] * &RISTRETTO_BASEPOINT_TABLE);
+            .push(&coefficients.0[j] * RISTRETTO_BASEPOINT_TABLE);
     }
 
     // Generate secret shares here
-    let group_key = &RISTRETTO_BASEPOINT_TABLE * &coefficients.0[0];
+    let group_key = &coefficients.0[0] * RISTRETTO_BASEPOINT_TABLE;
 
     // Only one polynomial because dealer, then secret shards are dependent upon index.
     for i in 1..parameters.n + 1 {
         let secret_share = SecretShare::evaluate_polynomial(&i, &coefficients);
         let public_key = IndividualPublicKey {
             index: i,
-            share: &RISTRETTO_BASEPOINT_TABLE * &secret_share.polynomial_evaluation,
+            share: &secret_share.polynomial_evaluation * RISTRETTO_BASEPOINT_TABLE,
         };
 
         participants.push(DealtParticipant {
@@ -391,10 +404,10 @@ impl DistributedKeyGeneration<RoundOne> {
         my_secret_shares: Vec<SecretShare>,
     ) -> Result<DistributedKeyGeneration<RoundTwo>, ()> {
         // Zero out the other participants secret shares from memory.
-        if self.state.their_secret_shares.is_some() {
-            self.state.their_secret_shares.unwrap().zeroize();
-            // XXX Does setting this to None always call drop()?
-            self.state.their_secret_shares = None;
+        if let Some(mut shares) = self.state.their_secret_shares.take() {
+            for share in shares.iter_mut() {
+                share.polynomial_evaluation = Scalar::ZERO;
+            }
         }
 
         if my_secret_shares.len() != self.state.parameters.n as usize - 1 {
@@ -423,8 +436,7 @@ impl DistributedKeyGeneration<RoundOne> {
 
 /// A secret share calculated by evaluating a polynomial with secret
 /// coefficients for some indeterminant.
-#[derive(Clone, Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Clone, Debug)]
 pub struct SecretShare {
     /// The participant index that this secret share was calculated for.
     pub index: u32,
@@ -438,15 +450,15 @@ impl SecretShare {
     //
     // XXX [PAPER] [CFRG] The participant index CANNOT be 0, or the secret share ends up being Scalar::zero().
     pub(crate) fn evaluate_polynomial(index: &u32, coefficients: &Coefficients) -> SecretShare {
-        let term: Scalar = (*index).into();
-        let mut sum: Scalar = Scalar::zero();
+        let term: Scalar = Scalar::from(*index);
+        let mut sum: Scalar = Scalar::ZERO;
 
         // Evaluate using Horner's method.
-        for (index, coefficient) in coefficients.0.iter().rev().enumerate() {
+        for (idx, coefficient) in coefficients.0.iter().rev().enumerate() {
             // The secret is the constant term in the polynomial
             sum += coefficient;
 
-            if index != (coefficients.0.len() - 1) {
+            if idx != (coefficients.0.len() - 1) {
                 sum *= term;
             }
         }
@@ -459,8 +471,8 @@ impl SecretShare {
     /// Verify that this secret share was correctly computed w.r.t. some secret
     /// polynomial coefficients attested to by some `commitment`.
     pub(crate) fn verify(&self, commitment: &VerifiableSecretSharingCommitment) -> Result<(), ()> {
-        let lhs = &RISTRETTO_BASEPOINT_TABLE * &self.polynomial_evaluation;
-        let term: Scalar = self.index.into();
+        let lhs = &self.polynomial_evaluation * RISTRETTO_BASEPOINT_TABLE;
+        let term: Scalar = Scalar::from(self.index);
         let mut rhs: RistrettoPoint = RistrettoPoint::identity();
 
         for (index, com) in commitment.0.iter().rev().enumerate() {
@@ -496,8 +508,13 @@ impl DistributedKeyGeneration<RoundTwo> {
         let secret_key = self.calculate_signing_key()?;
         let group_key = self.calculate_group_key(my_commitment)?;
 
-        self.state.my_secret_share.zeroize();
-        self.state.my_secret_shares.zeroize();
+        // Zero out secret shares from memory
+        self.state.my_secret_share.polynomial_evaluation = Scalar::ZERO;
+        if let Some(ref mut shares) = self.state.my_secret_shares {
+            for share in shares.iter_mut() {
+                share.polynomial_evaluation = Scalar::ZERO;
+            }
+        }
 
         Ok((group_key, secret_key))
     }
@@ -594,8 +611,7 @@ impl IndividualPublicKey {
 }
 
 /// A secret key, used by one participant in a threshold signature scheme, to sign a message.
-#[derive(Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Debug)]
 pub struct SecretKey {
     /// The participant index to which this key belongs.
     pub(crate) index: u32,
@@ -606,7 +622,7 @@ pub struct SecretKey {
 impl SecretKey {
     /// Derive the corresponding public key for this secret key.
     pub fn to_public(&self) -> IndividualPublicKey {
-        let share = &RISTRETTO_BASEPOINT_TABLE * &self.key;
+        let share = &self.key * RISTRETTO_BASEPOINT_TABLE;
 
         IndividualPublicKey {
             index: self.index,
@@ -655,8 +671,8 @@ pub(crate) fn calculate_lagrange_coefficients(
     participant_index: &u32,
     all_participant_indices: &[u32],
 ) -> Result<Scalar, &'static str> {
-    let mut num = Scalar::one();
-    let mut den = Scalar::one();
+    let mut num = Scalar::ONE;
+    let mut den = Scalar::ONE;
 
     let mine = Scalar::from(*participant_index);
 
@@ -670,7 +686,7 @@ pub(crate) fn calculate_lagrange_coefficients(
         den *= s - mine; // Check to ensure that one person isn't trying to sign twice.
     }
 
-    if den == Scalar::zero() {
+    if den == Scalar::ZERO {
         return Err("Duplicate shares provided");
     }
     Ok(num * den.invert())
@@ -697,7 +713,7 @@ mod test {
     fn reconstruct_secret(participants: &Vec<&DealtParticipant>) -> Result<Scalar, &'static str> {
         let all_participant_indices: Vec<u32> =
             participants.iter().map(|p| p.public_key.index).collect();
-        let mut secret = Scalar::zero();
+        let mut secret = Scalar::ZERO;
 
         for this_participant in participants {
             let my_coeff = crate::keygen::calculate_lagrange_coefficients(
@@ -724,7 +740,9 @@ mod test {
     fn verify_secret_sharing_from_dealer() {
         let params = Parameters { n: 3, t: 2 };
         let mut rng: OsRng = OsRng;
-        let secret = Scalar::random(&mut rng);
+        let mut secret_bytes = [0u8; 64];
+        rng.fill_bytes(&mut secret_bytes);
+        let secret = Scalar::from_bytes_mod_order_wide(&secret_bytes);
         let (participants, _commitment) = generate_shares(&params, secret, &mut rng);
 
         let mut subset_participants = Vec::new();
@@ -847,20 +865,20 @@ mod test {
         let mut coeffs: Vec<Scalar> = Vec::new();
 
         for _ in 0..5 {
-            coeffs.push(Scalar::one());
+            coeffs.push(Scalar::ONE);
         }
 
         let coefficients = Coefficients(coeffs);
         let share = SecretShare::evaluate_polynomial(&1, &coefficients);
 
-        assert!(share.polynomial_evaluation == Scalar::from(5u8));
+        assert!(share.polynomial_evaluation == Scalar::from(5u32));
 
         let mut commitments = VerifiableSecretSharingCommitment(Vec::new());
 
         for i in 0..5 {
             commitments
                 .0
-                .push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
+                .push(&coefficients.0[i] * RISTRETTO_BASEPOINT_TABLE);
         }
 
         assert!(share.verify(&commitments).is_ok());
@@ -871,20 +889,20 @@ mod test {
         let mut coeffs: Vec<Scalar> = Vec::new();
 
         for _ in 0..5 {
-            coeffs.push(Scalar::one());
+            coeffs.push(Scalar::ONE);
         }
 
         let coefficients = Coefficients(coeffs);
         let share = SecretShare::evaluate_polynomial(&0, &coefficients);
 
-        assert!(share.polynomial_evaluation == Scalar::one());
+        assert!(share.polynomial_evaluation == Scalar::ONE);
 
         let mut commitments = VerifiableSecretSharingCommitment(Vec::new());
 
         for i in 0..5 {
             commitments
                 .0
-                .push(&RISTRETTO_BASEPOINT_TABLE * &coefficients.0[i]);
+                .push(&coefficients.0[i] * RISTRETTO_BASEPOINT_TABLE);
         }
 
         assert!(share.verify(&commitments).is_ok());
@@ -918,7 +936,7 @@ mod test {
 
         assert!(
             p1_group_key.0.compress()
-                == (&p1_secret_key.key * &RISTRETTO_BASEPOINT_TABLE).compress()
+                == (&p1_secret_key.key * RISTRETTO_BASEPOINT_TABLE).compress()
         );
     }
 

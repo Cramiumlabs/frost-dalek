@@ -12,6 +12,8 @@
 #[cfg(feature = "std")]
 
 mod integration_frost {
+    use std::convert::TryInto;
+    
     use ed25519_dalek::Verifier;
 
     use rand::rngs::OsRng;
@@ -317,7 +319,7 @@ mod integration_frost {
         let signature = ed25519_dalek::Signature::from(signature_bytes);
 
         let public_key_bytes = group_key.to_bytes();
-        let public_key = ed25519_dalek::PublicKey::from_bytes(&public_key_bytes[..]);
+        let public_key = ed25519_dalek::VerifyingKey::from_bytes(&public_key_bytes[..].try_into().unwrap());
 
         if public_key.is_ok() {
             let pk = public_key.unwrap();
