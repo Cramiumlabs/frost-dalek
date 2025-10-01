@@ -120,7 +120,12 @@ impl ThresholdSignature {
 
         array.copy_from_slice(&bytes[32..]);
 
-        let z = Scalar::from_canonical_bytes(array).ok_or(())?;
+        let z_option = Scalar::from_canonical_bytes(array);
+        let z = if bool::from(z_option.is_some()) {
+            z_option.unwrap()
+        } else {
+            return Err(());
+        };
 
         Ok(ThresholdSignature { R, z })
     }
@@ -241,7 +246,10 @@ fn compute_binding_factors_and_group_commitment(
         h1.update(hiding.compress().as_bytes());
         h1.update(binding.compress().as_bytes());
 
-        let binding_factor = Scalar::from_hash(h1); // This is rho in the paper.
+        let hash_output = h1.finalize();
+        let mut binding_factor_bytes = [0u8; 64];
+        binding_factor_bytes.copy_from_slice(&hash_output);
+        let binding_factor = Scalar::from_bytes_mod_order_wide(&binding_factor_bytes); // This is rho in the paper.
 
         // THIS IS THE MAGIC STUFF ↓↓↓
         Rs.insert(
@@ -263,7 +271,10 @@ fn compute_challenge(message_hash: &[u8; 64], group_key: &GroupKey, R: &Ristrett
     h2.update(group_key.to_bytes());
     h2.update(&message_hash[..]);
 
-    Scalar::from_hash(h2)
+    let hash_output = h2.finalize();
+    let mut challenge_bytes = [0u8; 64];
+    challenge_bytes.copy_from_slice(&hash_output);
+    Scalar::from_bytes_mod_order_wide(&challenge_bytes)
 }
 
 impl SecretKey {
@@ -615,7 +626,7 @@ impl SignatureAggregator<Finalized> {
             .iter()
             .map(|x| x.participant_index)
             .collect();
-        let mut z = Scalar::zero();
+        let mut z = Scalar::ZERO;
 
         for signer in self.state.signers.iter() {
             // [DIFFERENT_TO_PAPER] We're not just pulling lambda out of our
@@ -651,7 +662,7 @@ impl SignatureAggregator<Finalized> {
                 .get(&signer.participant_index)
                 .unwrap();
 
-            let check = &RISTRETTO_BASEPOINT_TABLE * partial_sig;
+            let check = partial_sig * RISTRETTO_BASEPOINT_TABLE;
 
             // Again, this unwrap() cannot fail, because we check the
             // participant indexes against the expected ones in finalize().
@@ -706,6 +717,7 @@ mod test {
     use curve25519_dalek::traits::Identity;
 
     use rand::rngs::OsRng;
+    use rand_core::RngCore;
 
     #[test]
     fn signing_and_verification_single_party() {
@@ -1214,13 +1226,17 @@ mod test {
             &message[..],
         );
 
+        let mut bytes1 = [0u8; 64];
+        let mut bytes2 = [0u8; 64];
+        OsRng.fill_bytes(&mut bytes1);
+        OsRng.fill_bytes(&mut bytes2);
         let p1_sk = SecretKey {
             index: 1,
-            key: Scalar::random(&mut OsRng),
+            key: Scalar::from_bytes_mod_order_wide(&bytes1),
         };
         let p2_sk = SecretKey {
             index: 2,
-            key: Scalar::random(&mut OsRng),
+            key: Scalar::from_bytes_mod_order_wide(&bytes2),
         };
 
         aggregator.include_signer(2, p2_public_comshares.commitments[0], (&p2_sk).into());

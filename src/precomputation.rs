@@ -9,10 +9,10 @@
 
 //! Precomputation for one-round signing.
 
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::boxed::Box;
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
@@ -27,20 +27,33 @@ use subtle::ConstantTimeEq;
 
 use zeroize::Zeroize;
 
-#[derive(Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Debug)]
 pub(crate) struct NoncePair(pub(crate) Scalar, pub(crate) Scalar);
 
 impl NoncePair {
     pub fn new(mut csprng: impl CryptoRng + RngCore) -> Self {
-        NoncePair(Scalar::random(&mut csprng), Scalar::random(&mut csprng))
+        let mut bytes1 = [0u8; 64];
+        let mut bytes2 = [0u8; 64];
+        csprng.fill_bytes(&mut bytes1);
+        csprng.fill_bytes(&mut bytes2);
+        NoncePair(
+            Scalar::from_bytes_mod_order_wide(&bytes1),
+            Scalar::from_bytes_mod_order_wide(&bytes2)
+        )
+    }
+}
+
+impl Drop for NoncePair {
+    fn drop(&mut self) {
+        self.0 = Scalar::ZERO;
+        self.1 = Scalar::ZERO;
     }
 }
 
 impl From<NoncePair> for CommitmentShare {
     fn from(other: NoncePair) -> CommitmentShare {
-        let x = &RISTRETTO_BASEPOINT_TABLE * &other.0;
-        let y = &RISTRETTO_BASEPOINT_TABLE * &other.1;
+        let x = &other.0 * RISTRETTO_BASEPOINT_TABLE;
+        let y = &other.1 * RISTRETTO_BASEPOINT_TABLE;
 
         CommitmentShare {
             hiding: Commitment {
@@ -64,16 +77,10 @@ pub(crate) struct Commitment {
     pub(crate) sealed: RistrettoPoint,
 }
 
-impl Zeroize for Commitment {
-    fn zeroize(&mut self) {
-        self.nonce.zeroize();
-        self.sealed = RistrettoPoint::identity();
-    }
-}
-
 impl Drop for Commitment {
     fn drop(&mut self) {
-        self.zeroize();
+        self.nonce = Scalar::ZERO;
+        self.sealed = RistrettoPoint::identity();
     }
 }
 
@@ -85,8 +92,7 @@ impl ConstantTimeEq for Commitment {
 }
 
 /// A precomputed commitment share.
-#[derive(Clone, Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Clone, Debug)]
 pub struct CommitmentShare {
     /// The hiding commitment.
     ///
@@ -219,7 +225,7 @@ mod test {
 
         assert_eq!(
             public_share_list.commitments[0].0.compress(),
-            (&secret_share_list.commitments[0].hiding.nonce * &RISTRETTO_BASEPOINT_TABLE)
+            (&secret_share_list.commitments[0].hiding.nonce * RISTRETTO_BASEPOINT_TABLE)
                 .compress()
         );
     }

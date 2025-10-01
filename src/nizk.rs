@@ -49,8 +49,10 @@ impl NizkOfSecretKey {
         public_key: &RistrettoPoint,
         rng: &mut R,
     ) -> Self {
-        let k: Scalar = Scalar::random(rng);
-        let M: RistrettoPoint = &k * &RISTRETTO_BASEPOINT_TABLE;
+        let mut k_bytes = [0u8; 64];
+        rng.fill_bytes(&mut k_bytes);
+        let k: Scalar = Scalar::from_bytes_mod_order_wide(&k_bytes);
+        let M: RistrettoPoint = &k * RISTRETTO_BASEPOINT_TABLE;
 
         let mut hram = Sha512::new();
 
@@ -59,7 +61,10 @@ impl NizkOfSecretKey {
         hram.update(public_key.compress().as_bytes());
         hram.update(M.compress().as_bytes());
 
-        let s = Scalar::from_hash(hram);
+        let hash_output = hram.finalize();
+        let mut s_bytes = [0u8; 64];
+        s_bytes.copy_from_slice(&hash_output);
+        let s = Scalar::from_bytes_mod_order_wide(&s_bytes);
         let r = k + (secret_key * s);
 
         NizkOfSecretKey { s, r }
@@ -68,7 +73,7 @@ impl NizkOfSecretKey {
     /// Verify that the prover does indeed know the secret key.
     pub fn verify(&self, index: &u32, public_key: &RistrettoPoint) -> Result<(), ()> {
         let M_prime: RistrettoPoint =
-            (&RISTRETTO_BASEPOINT_TABLE * &self.r) + (public_key * -&self.s);
+            (&self.r * RISTRETTO_BASEPOINT_TABLE) + (public_key * -&self.s);
 
         let mut hram = Sha512::new();
 
@@ -77,7 +82,10 @@ impl NizkOfSecretKey {
         hram.update(public_key.compress().as_bytes());
         hram.update(M_prime.compress().as_bytes());
 
-        let s_prime = Scalar::from_hash(hram);
+        let hash_output = hram.finalize();
+        let mut s_prime_bytes = [0u8; 64];
+        s_prime_bytes.copy_from_slice(&hash_output);
+        let s_prime = Scalar::from_bytes_mod_order_wide(&s_prime_bytes);
 
         if self.s == s_prime {
             return Ok(());
