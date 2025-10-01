@@ -1,10 +1,17 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(any(feature = "std", feature = "alloc", feature = "force-alloc")))]
+compile_error!(
+    "This module requires heap. Enable one of: `std`, `alloc`, or `std with force-alloc` features."
+);
+
 #[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 extern crate alloc;
 
 #[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 use linked_list_allocator::LockedHeap;
+
+use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 const RUST_HEAP_SIZE: usize = 256 * 1024;
@@ -19,13 +26,20 @@ static mut RUST_HEAP: [u8; RUST_HEAP_SIZE] = [0; RUST_HEAP_SIZE];
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
+static HEAP_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 /// Initialize the allocator (Rust only)
 #[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 pub fn init_heap() {
-    unsafe {
-        ALLOCATOR
-            .lock()
-            .init(RUST_HEAP.as_ptr() as *mut u8, RUST_HEAP_SIZE);
+    if HEAP_INITIALIZED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::Relaxed)
+        .is_ok()
+    {
+        unsafe {
+            ALLOCATOR
+                .lock()
+                .init(RUST_HEAP.as_ptr() as *mut u8, RUST_HEAP_SIZE);
+        }
     }
 }
 
