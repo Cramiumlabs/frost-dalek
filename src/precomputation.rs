@@ -38,7 +38,7 @@ impl NoncePair {
         csprng.fill_bytes(&mut bytes2);
         NoncePair(
             Scalar::from_bytes_mod_order_wide(&bytes1),
-            Scalar::from_bytes_mod_order_wide(&bytes2)
+            Scalar::from_bytes_mod_order_wide(&bytes2),
         )
     }
 }
@@ -225,8 +225,7 @@ mod test {
 
         assert_eq!(
             public_share_list.commitments[0].0.compress(),
-            (&secret_share_list.commitments[0].hiding.nonce * RISTRETTO_BASEPOINT_TABLE)
-                .compress()
+            (&secret_share_list.commitments[0].hiding.nonce * RISTRETTO_BASEPOINT_TABLE).compress()
         );
     }
 
