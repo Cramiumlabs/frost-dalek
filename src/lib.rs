@@ -671,6 +671,11 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(not(any(feature = "std", feature = "alloc", feature = "force-alloc")))]
+compile_error!(
+    "This module requires heap. Enable one of: `std`, `alloc`, or `std with force-alloc` features."
+);
+
 #[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
 extern crate alloc;
 

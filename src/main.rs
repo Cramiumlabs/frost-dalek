@@ -1,3 +1,8 @@
+#[cfg(not(any(feature = "std", feature = "alloc", feature = "force-alloc")))]
+compile_error!(
+    "This module requires heap. Enable one of: `std`, `alloc`, or `std with force-alloc` features."
+);
+
 use std::boxed::Box;
 use std::io::{self, Write};
 
