@@ -676,17 +676,26 @@ compile_error!(
     "This module requires heap. Enable one of: `std`, `alloc`, or `std with force-alloc` features."
 );
 
-#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 extern crate alloc;
 
-#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 mod panic;
 
-#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
-pub mod heap;
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+pub mod allocator;
 
-#[cfg(any(feature = "alloc", all(feature = "std", feature = "force-alloc")))]
-pub use {heap::heap_stats, heap::init_heap};
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
+pub mod ac_heap;
+
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
+pub use ac_heap::{init_heap, heap_stats};
+
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "fixed-heap"))]
+pub mod fixed_heap;
+
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "fixed-heap"))]
+pub use fixed_heap::{init_heap, heap_stats};
 
 #[cfg(all(test, feature = "std"))]
 #[macro_use]
@@ -707,14 +716,15 @@ pub use precomputation::generate_commitment_share_lists;
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub use signature::*;
 
-#[cfg(all(test, feature = "force-alloc", feature = "std"))]
+#[cfg(all(test, feature = "force-alloc"))]
 mod test_init {
     use super::*;
+
     use ctor::ctor;
 
     #[ctor]
     fn init_allocator_before_tests() {
         init_heap();
-        eprintln!("[ctor] custom allocator initialized before tests");
+        println!("[ctor] custom allocator initialized before tests");
     }
 }

@@ -47,7 +47,7 @@ getrandom = { version = "0.1", features = ["dummy"] }
 
 
 [features]
-default = ["std","force-alloc"]
+default = ["std","force-alloc", "ac-heap"]
 
 alloc = [
     "curve25519-dalek/alloc",
@@ -61,4 +61,6 @@ std = [
 
 force-alloc = []
 
-u64_backend = []
+ac-heap = ["alloc"]
+
+fixed-heap = ["alloc"]

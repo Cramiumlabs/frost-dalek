@@ -14,7 +14,7 @@ use frost_dalek::{
 const PAGE_SIZE: usize = 4096; // 4 KB per page
 
 fn main() {
-    #[cfg(feature = "force-alloc")]
+    #[cfg(all(feature = "force-alloc", feature="fixed-heap"))]
     frost_dalek::init_heap();
 
     println!("Custom allocator ready. Each page = {} bytes", PAGE_SIZE);

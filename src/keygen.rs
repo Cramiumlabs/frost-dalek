@@ -5,7 +5,7 @@ use std::boxed::Box;
 #[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::vec::Vec;
 
-#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+#[cfg(any(feature = "ac-heap", feature = "alloc", feature = "force-alloc"))]
 use alloc::boxed::Box;
 #[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::vec::Vec;

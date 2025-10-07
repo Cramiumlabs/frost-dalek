@@ -203,6 +203,7 @@ impl SecretCommitmentShareList {
 }
 
 #[cfg(test)]
+#[cfg(feature="std")]
 mod test {
     use super::*;
 
