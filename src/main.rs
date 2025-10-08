@@ -14,7 +14,7 @@ use frost_dalek::{
 const PAGE_SIZE: usize = 4096; // 4 KB per page
 
 fn main() {
-    #[cfg(all(feature = "force-alloc", feature="fixed-heap"))]
+    #[cfg(all(feature = "force-alloc", feature = "fixed-heap"))]
     frost_dalek::init_heap();
 
     println!("Custom allocator ready. Each page = {} bytes", PAGE_SIZE);
@@ -142,15 +142,16 @@ fn frost_test(n: u32, t: u32) {
             .map(|(_, p)| p.clone())
             .collect();
 
-        let state = DistributedKeyGeneration::<_>::new(
-            &params,
-            &participants[i].index,
-            &coeffs_vec[i],
-            &mut others,
-        )
-        .unwrap();
+        let state: DistributedKeyGeneration<frost_dalek::RoundOne> =
+            DistributedKeyGeneration::<_>::new(
+                &params,
+                &participants[i].index,
+                &coeffs_vec[i],
+                &mut others,
+            )
+            .unwrap();
 
-        let shares = state.their_secret_shares().unwrap().clone();
+        let shares: Vec<frost_dalek::SecretShare> = state.their_secret_shares().unwrap().clone();
         dkg_states.push(state);
         secret_shares_all.push(shares);
     }
@@ -230,6 +231,7 @@ fn frost_test(n: u32, t: u32) {
         verification_result.is_ok()
     );
 }
+
 #[cfg(feature = "force-alloc")]
 fn print_heap_stats(prefix: &str) {
     let (size, used, free) = frost_dalek::heap_stats();

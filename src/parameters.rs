@@ -11,10 +11,18 @@
 
 /// The configuration parameters for conducting the process of creating a
 /// threshold signature.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Default)]
 pub struct Parameters {
     /// The number of participants in the scheme.
     pub n: u32,
     /// The threshold required for a successful signature.
     pub t: u32,
+}
+
+#[derive(Copy, Clone)]
+pub enum FrostError {
+    DkgInvalidPartners,
+    DkgInvalidShares,
+    DkgInvalidSecretShares,
+    Unknown,
 }

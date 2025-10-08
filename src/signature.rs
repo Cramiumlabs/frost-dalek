@@ -705,10 +705,8 @@ impl ThresholdSignature {
 }
 
 #[cfg(test)]
-#[cfg(feature="std")]
+#[cfg(feature = "std")]
 mod test {
-    use std::env::consts::OS;
-
     use super::*;
 
     use crate::keygen::Participant;

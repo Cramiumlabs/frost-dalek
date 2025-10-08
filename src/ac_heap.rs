@@ -1,9 +1,9 @@
 #[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
+use crate::allocator::HeapStats;
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
 use core::alloc::{GlobalAlloc, Layout};
 #[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
 use core::sync::atomic::{AtomicBool, Ordering};
-#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
-use crate::allocator::HeapStats;
 
 #[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
 extern "C" {
