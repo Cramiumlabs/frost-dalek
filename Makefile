@@ -8,26 +8,35 @@ clean:
 	cargo clean
 
 build-desktop: $(SRC) $(CARGO)
-	cargo build --release --no-default-features --features "std,u64_backend" --lib
+	cargo build --release --locked --no-default-features --features "std" --lib
 
-build-desktop-force-alloc: $(SRC) $(CARGO)
-	cargo build --release --no-default-features --features "std,u64_backend,force-alloc" --lib
+build-desktop-fixed-heap: $(SRC) $(CARGO)
+	cargo build --release --locked --no-default-features --features "std,fixed-heap,force-alloc" --lib
+
+build-desktop-ac-heap: $(SRC) $(CARGO)
+	cargo build --release --locked --no-default-features --features "std,ac-heap,force-alloc" --lib
 
 build-ac: $(SRC) $(CARGO)
-	cargo build --release --target thumbv7em-none-eabi --no-default-features --features "alloc,u64_backend" --lib
+	cargo build --release --locked --target thumbv7em-none-eabi --no-default-features --features "alloc,ac-heap" --lib
 
-# frost-cli binary rule
 $(BIN): $(SRC) $(CARGO)
-	cargo build --release --bin frost-cli --no-default-features --features "std,u64_backend,force-alloc"
+	cargo build --release --locked --bin frost-cli --no-default-features --features "std,ac-heap,force-alloc"
 
-# build-test now just points to the binary
 build-test: $(BIN)
 
 test-desktop: $(SRC) $(CARGO)
-	cargo test --no-default-features --features "std,u64_backend"
+	cargo test --locked --no-default-features --features "std"
 
-test-desktop-force-alloc: $(SRC) $(CARGO)
-	cargo test --no-default-features --features "std,u64_backend,force-alloc"
+test-desktop-fixed-heap: $(SRC) $(CARGO)
+	cargo test --locked --no-default-features --features "std,fixed-heap,force-alloc"
 
-run-test: build-test
-	$(BIN)
+test-desktop-ac-heap: $(SRC) $(CARGO)
+	cargo test --locked --no-default-features --features "std,ac-heap,force-alloc"
+
+run-test-fixed-heap: $(SRC) $(CARGO)
+	cargo build --release --locked --bin frost-cli --no-default-features --features "std,fixed-heap,force-alloc"
+	target/release/frost-cli
+
+run-test-ac-heap: $(SRC) $(CARGO)
+	cargo build --release --locked --bin frost-cli --no-default-features --features "std,ac-heap,force-alloc"
+	target/release/frost-cli
