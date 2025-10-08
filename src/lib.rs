@@ -720,7 +720,7 @@ pub use keygen::*;
 pub use parameters::*;
 pub use precomputation::generate_commitment_share_lists;
 
-#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg(any(feature = "alloc", feature = "force-alloc",feature = "std"))]
 pub use signature::*;
 
 #[cfg(all(test, feature = "force-alloc"))]

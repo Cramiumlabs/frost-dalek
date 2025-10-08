@@ -7,20 +7,29 @@ use alloc::vec::Vec;
 use std::vec::Vec;
 
 use rand_core::{CryptoRng, RngCore};
+use curve25519_dalek::ristretto::RistrettoPoint;
 
 use crate::keygen;
+use crate::signature;
 use crate::parameters;
+use crate::precomputation;
 
 #[derive(Clone, Default, Debug)]
 pub struct Party {
     index: u32,
     parameters: parameters::Parameters,
+    is_presigning: bool,
+
+    // Keygen state data
     participant: keygen::Participant,
     coefficients: keygen::Coefficients,
     dkg_state_r1: keygen::DistributedKeyGeneration<keygen::RoundOne>,
     dkg_state_r2: keygen::DistributedKeyGeneration<keygen::RoundTwo>,
     secret_share: keygen::SecretKey,
     group_key: keygen::GroupKey,
+
+    // Signing state data
+    signer: signature::Signer,
 }
 
 pub trait MetaData {
@@ -40,7 +49,22 @@ pub trait Keygen {
     ) -> Result<(), parameters::FrostError>;
 }
 
-pub trait Signing {}
+pub trait PreSigning {
+    fn generate_presigning_data()-> (precomputation::PublicCommitmentShareList, precomputation::SecretCommitmentShareList);
+}
+
+pub trait Signing {
+    fn generate_commitment_data(&self, csprng: impl CryptoRng + RngCore) -> (precomputation::PublicCommitmentShareList, precomputation::SecretCommitmentShareList);
+    fn sign(
+        &self,
+        message_hash: &[u8; 64],
+        group_key: &keygen::GroupKey,
+        my_secret_commitment_share_list: &mut precomputation::SecretCommitmentShareList,
+        my_commitment_share_index: usize,
+        signers: &[signature::Signer],
+    ) -> Result<signature::PartialThresholdSignature, &'static str>;
+    fn combine_partial_signatures(&self);
+}
 
 // Commitments and ZK Proofs
 pub type Message1 = keygen::Participant;
@@ -50,16 +74,16 @@ impl Party {
         Self {
             index,
             parameters: parameters::Parameters { t, n },
+            is_presigning: true,
             participant: Default::default(),
             coefficients: Default::default(),
             dkg_state_r1: Default::default(),
             dkg_state_r2: Default::default(),
             secret_share: Default::default(),
             group_key: Default::default(),
+            signer: Default::default(),
         }
     }
-
-    
 }
 
 impl Keygen for Party {
@@ -126,6 +150,32 @@ impl Keygen for Party {
             Err(_) => return Err(parameters::FrostError::DkgInvalidSecretShares),
         }
         return Ok(());
+    }
+}
+
+impl Signing for Party {
+    fn generate_commitment_data(&self, csprng: impl CryptoRng + RngCore) -> (precomputation::PublicCommitmentShareList, precomputation::SecretCommitmentShareList) {
+        if !self.is_presigning {
+            return precomputation::generate_commitment_share_lists(csprng, (self.index + 1) as u32, 1);
+        } else {
+            return precomputation::generate_commitment_share_lists(csprng, (self.index + 1) as u32, 0);
+        }
+        
+    }
+
+    fn sign(
+        &self,
+        message_hash: &[u8; 64],
+        group_key: &keygen::GroupKey,
+        my_secret_commitment_share_list: &mut precomputation::SecretCommitmentShareList,
+        my_commitment_share_index: usize,
+        signers: &[signature::Signer],
+    )-> Result<signature::PartialThresholdSignature, &'static str>{
+        return self.secret_share.sign(message_hash, group_key, my_secret_commitment_share_list, my_commitment_share_index, signers);
+    }
+
+    fn combine_partial_signatures(&self){
+
     }
 }
 
