@@ -6,13 +6,17 @@ use alloc::vec::Vec;
 #[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::vec::Vec;
 
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+use hashbrown::HashMap;
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
+use std::collections::HashMap;
+
 use rand_core::{CryptoRng, RngCore};
-use curve25519_dalek::ristretto::RistrettoPoint;
 
 use crate::keygen;
-use crate::signature;
 use crate::parameters;
 use crate::precomputation;
+use crate::signature;
 
 #[derive(Clone, Default, Debug)]
 pub struct Party {
@@ -29,7 +33,8 @@ pub struct Party {
     group_key: keygen::GroupKey,
 
     // Signing state data
-    signer: signature::Signer,
+    signer: Vec<signature::Signer>,
+    aggregator: signature::SignatureAggregator<signature::Finalized>,
 }
 
 pub trait MetaData {
@@ -50,21 +55,40 @@ pub trait Keygen {
 }
 
 pub trait PreSigning {
-    fn generate_presigning_data()-> (precomputation::PublicCommitmentShareList, precomputation::SecretCommitmentShareList);
+    fn generate_presigning_data() -> (
+        precomputation::PublicCommitmentShareList,
+        precomputation::SecretCommitmentShareList,
+    );
 }
 
 pub trait Signing {
-    fn generate_commitment_data(&self, csprng: impl CryptoRng + RngCore) -> (precomputation::PublicCommitmentShareList, precomputation::SecretCommitmentShareList);
-    fn sign(
+    fn generate_commitment_data(
         &self,
-        message_hash: &[u8; 64],
+        rng: impl CryptoRng + RngCore,
+    ) -> (
+        precomputation::PublicCommitmentShareList,
+        precomputation::SecretCommitmentShareList,
+    );
+
+    fn sign(
+        &mut self,
+        message: &[u8],
         group_key: &keygen::GroupKey,
         my_secret_commitment_share_list: &mut precomputation::SecretCommitmentShareList,
         my_commitment_share_index: usize,
         signers: &[signature::Signer],
     ) -> Result<signature::PartialThresholdSignature, &'static str>;
-    fn combine_partial_signatures(&self);
+
+    /// Combine partial signatures and verify the final result.
+    /// Returns Ok((ThresholdSignature, verified_bool)) if success.
+    fn combine_partial_signatures(
+        &self,
+        group_key: &keygen::GroupKey,
+        message: &[u8],
+        partial_signatures: Vec<signature::PartialThresholdSignature>,
+    ) -> Result<(signature::ThresholdSignature, bool), HashMap<u32, &'static str>>;
 }
+
 
 // Commitments and ZK Proofs
 pub type Message1 = keygen::Participant;
@@ -82,6 +106,7 @@ impl Party {
             secret_share: Default::default(),
             group_key: Default::default(),
             signer: Default::default(),
+            aggregator: Default::default(),
         }
     }
 }
@@ -154,30 +179,89 @@ impl Keygen for Party {
 }
 
 impl Signing for Party {
-    fn generate_commitment_data(&self, csprng: impl CryptoRng + RngCore) -> (precomputation::PublicCommitmentShareList, precomputation::SecretCommitmentShareList) {
+    fn generate_commitment_data(
+        &self,
+        rng: impl CryptoRng + RngCore,
+    ) -> (
+        precomputation::PublicCommitmentShareList,
+        precomputation::SecretCommitmentShareList,
+    ) {
         if !self.is_presigning {
-            return precomputation::generate_commitment_share_lists(csprng, (self.index + 1) as u32, 1);
+            return precomputation::generate_commitment_share_lists(
+                rng,
+                (self.index + 1) as u32,
+                1,
+            );
         } else {
-            return precomputation::generate_commitment_share_lists(csprng, (self.index + 1) as u32, 0);
+            return precomputation::generate_commitment_share_lists(
+                rng,
+                (self.index + 1) as u32,
+                0,
+            );
         }
-        
     }
 
     fn sign(
-        &self,
-        message_hash: &[u8; 64],
+        &mut self,
+        message: &[u8],
         group_key: &keygen::GroupKey,
         my_secret_commitment_share_list: &mut precomputation::SecretCommitmentShareList,
         my_commitment_share_index: usize,
         signers: &[signature::Signer],
-    )-> Result<signature::PartialThresholdSignature, &'static str>{
-        return self.secret_share.sign(message_hash, group_key, my_secret_commitment_share_list, my_commitment_share_index, signers);
+    ) -> Result<signature::PartialThresholdSignature, &'static str> {
+        let message_hash = &signature::compute_message_hash(&[], &message[..]);
+
+        self.secret_share.sign(
+            message_hash,
+            group_key,
+            my_secret_commitment_share_list,
+            my_commitment_share_index,
+            &signers,
+        )
     }
 
-    fn combine_partial_signatures(&self){
+    fn combine_partial_signatures(
+        &self,
+        group_key: &keygen::GroupKey,
+        message: &[u8],
+        partial_signatures: Vec<signature::PartialThresholdSignature>,
+    ) -> Result<(signature::ThresholdSignature, bool), HashMap<u32, &'static str>> {
+        let mut aggregator: signature::SignatureAggregator<signature::Initial<'_>> =
+            signature::SignatureAggregator::new(
+                self.parameters,
+                group_key.clone(),
+                &[],
+                &message[..],
+            );
 
+        for signer in self.signer.iter() {
+            aggregator.include_signer(
+                signer.participant_index,
+                signer.published_commitment_share,
+                signer.public_key,
+            );
+        }
+
+        for partial in partial_signatures {
+            aggregator.include_partial_signature(partial);
+        }
+
+        match aggregator.finalize() {
+            Ok(finalized_aggregator) => {
+                match finalized_aggregator.aggregate() {
+                    Ok(threshold_signature) => {
+                        let message_hash = signature::compute_message_hash(&[], &message[..]);
+                        let verify_result = threshold_signature.verify(group_key, &message_hash);
+                        Ok((threshold_signature, verify_result.is_ok()))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 }
+
 
 impl MetaData for Party {
     fn get_index(&self) -> u32 {

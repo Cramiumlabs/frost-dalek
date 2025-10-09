@@ -564,7 +564,7 @@ impl DistributedKeyGeneration<RoundTwo> {
 ///
 /// Any participant can recalculate the public verification share, which is the
 /// public half of a [`SecretKey`], of any other participant in the protocol.
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct IndividualPublicKey {
     /// The participant index to which this key belongs.
     pub index: u32,
