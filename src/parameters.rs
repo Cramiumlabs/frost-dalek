@@ -19,10 +19,12 @@ pub struct Parameters {
     pub t: u32,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum FrostError {
     DkgInvalidPartners,
     DkgInvalidShares,
     DkgInvalidSecretShares,
+    InvalidParameters,
+    SigningError,
     Unknown,
 }
