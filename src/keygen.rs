@@ -18,12 +18,14 @@ use curve25519_dalek::traits::Identity;
 
 use rand_core::{CryptoRng, RngCore};
 
+use zeroize::Zeroize;
+
 use crate::nizk::NizkOfSecretKey;
 use crate::parameters::Parameters;
 
 /// A struct for holding a shard of the shared secret, in order to ensure that
 /// the shard is overwritten with zeroes when it falls out of scope.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 pub struct Coefficients(pub(crate) Vec<Scalar>);
 
 impl Drop for Coefficients {
@@ -36,7 +38,7 @@ impl Drop for Coefficients {
 
 /// A commitment to the dealer's secret polynomial coefficients for Feldman's
 /// verifiable secret sharing scheme.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Zeroize)]
 pub struct VerifiableSecretSharingCommitment(pub(crate) Vec<RistrettoPoint>);
 
 /// A participant created by a trusted dealer.
@@ -245,14 +247,14 @@ mod private {
 
 /// State machine structures for holding intermediate values during a
 /// distributed key generation protocol run, to prevent misuse.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 pub struct DistributedKeyGeneration<S: DkgState> {
     state: Box<ActualState>,
     data: S,
 }
 
 /// Shared state which occurs across all rounds of a threshold signing protocol run.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 struct ActualState {
     /// The parameters for this instantiation of a threshold signature.
     parameters: Parameters,
@@ -302,7 +304,7 @@ impl Round2 for RoundTwo {}
 /// commitments and a zero-knowledge proof of a secret key to every other
 /// participant in the protocol.  During round one, each participant checks the
 /// zero-knowledge proofs of secret keys of all other participants.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 pub struct RoundOne {}
 
 impl DistributedKeyGeneration<RoundOne> {
@@ -436,7 +438,7 @@ impl DistributedKeyGeneration<RoundOne> {
 
 /// A secret share calculated by evaluating a polynomial with secret
 /// coefficients for some indeterminant.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 pub struct SecretShare {
     /// The participant index that this secret share was calculated for.
     pub index: u32,
@@ -492,7 +494,7 @@ impl SecretShare {
 
 /// During round two each participant verifies their secret shares they received
 /// from each other participant.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 pub struct RoundTwo {}
 
 impl DistributedKeyGeneration<RoundTwo> {
@@ -611,7 +613,7 @@ impl IndividualPublicKey {
 }
 
 /// A secret key, used by one participant in a threshold signature scheme, to sign a message.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Zeroize)]
 pub struct SecretKey {
     /// The participant index to which this key belongs.
     pub(crate) index: u32,

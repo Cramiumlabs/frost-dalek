@@ -11,7 +11,9 @@
 
 /// The configuration parameters for conducting the process of creating a
 /// threshold signature.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Default)]
+
+use zeroize::Zeroize;
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Default, Zeroize)]
 pub struct Parameters {
     /// The number of participants in the scheme.
     pub n: u32,

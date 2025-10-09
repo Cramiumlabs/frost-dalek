@@ -12,6 +12,7 @@
 // Box
 #[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::boxed::Box;
+use zeroize::Zeroize;
 #[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::boxed::Box;
 

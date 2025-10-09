@@ -13,6 +13,9 @@ use crate::parameters;
 use crate::precomputation;
 use crate::signature;
 
+use zeroize::Zeroize;
+
+
 #[derive(Clone, Debug)]
 pub struct Party {
     index: u32,
@@ -225,6 +228,20 @@ impl Keygen for Party {
     }
 
     fn clear_keygen_state(&mut self) {
+        if let Some(sk) = self.secret_share.as_mut() {
+            sk.zeroize();
+        }
+        if let Some(coeffs) = self.coefficients.as_mut() {
+            coeffs.zeroize();
+        }
+        if let Some(r1) = self.dkg_state_r1.as_mut() {
+            r1.zeroize();
+        }
+        if let Some(r2) = self.dkg_state_r2.as_mut() {
+            r2.zeroize();
+        }
+
+        // Then drop all references
         self.participant = None;
         self.coefficients = None;
         self.dkg_state_r1 = None;
