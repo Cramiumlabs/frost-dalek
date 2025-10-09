@@ -4,6 +4,7 @@ compile_error!("This module requires heap. Enable `std` features.");
 use std::boxed::Box;
 use std::io::{self, Write};
 
+use frost_dalek::protocol::PreSigning;
 use rand::rngs::OsRng;
 
 use frost_dalek;
@@ -221,7 +222,7 @@ fn frost_test(n: u32, t: u32) {
 
     let mut commitment_lists = Vec::new();
     for i in 0..t as usize {
-        match parties[i].generate_commitment_data(&mut rng) {
+        match parties[i].generate_presigning_data(1, &mut rng) {
             Ok((pub_coms, sec_coms)) => {
                 println!("  Party {} generated commitment data", i + 1);
                 commitment_lists.push((i, pub_coms, sec_coms));
@@ -233,25 +234,21 @@ fn frost_test(n: u32, t: u32) {
         }
     }
 
-    println!("\n[Step 7] Adding signers to parties...");
+    println!("\n[Step 7] Prepare signers vector");
+    let mut signers: Vec<frost_dalek::Signer> = Vec::new();
     for (i, pub_coms, _) in &commitment_lists {
         let signer = frost_dalek::signature::Signer {
             participant_index: (*i + 1) as u32,
             published_commitment_share: pub_coms.commitments[0],
             public_key: parties[*i].get_secret_share().unwrap().into(),
         };
-
-        for party in parties.iter_mut().take(t as usize) {
-            party.add_signer(signer.clone());
-        }
-        println!("  Added signer {} to all signing parties", i + 1);
+        signers.push(signer);
     }
 
     println!("\n[Step 8] Generating partial signatures...");
     let mut partial_signatures = Vec::new();
     for (i, _, mut sec_coms) in commitment_lists {
         // Clone signers to avoid borrow checker issues
-        let signers: Vec<_> = parties[i].get_signers().to_vec();
         match parties[i].sign(message, &mut sec_coms, 0, &signers) {
             Ok(partial) => {
                 println!("  Party {} created partial signature", i + 1);

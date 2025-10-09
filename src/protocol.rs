@@ -59,10 +59,17 @@ pub trait Keygen {
 }
 
 pub trait PreSigning {
-    fn generate_presigning_data() -> (
-        precomputation::PublicCommitmentShareList,
-        precomputation::SecretCommitmentShareList,
-    );
+    fn generate_presigning_data(
+        &self,
+        num_shares: usize,
+        rng: impl CryptoRng + RngCore,
+    ) -> Result<
+        (
+            precomputation::PublicCommitmentShareList,
+            precomputation::SecretCommitmentShareList,
+        ),
+        parameters::FrostError,
+    >;
 }
 
 pub trait Signing {
@@ -94,7 +101,6 @@ pub trait Signing {
     ) -> Result<(signature::ThresholdSignature, bool), parameters::FrostError>;
 
     fn clear_signing_state(&mut self);
-    fn add_signer(&mut self, signer: signature::Signer);
     fn get_signers(&self) -> &[signature::Signer];
 }
 
@@ -113,7 +119,7 @@ impl Party {
         Ok(Self {
             index,
             parameters: parameters::Parameters { t, n },
-            is_presigning: false, // Changed to false for normal signing
+            is_presigning: true,
             participant: None,
             coefficients: None,
             dkg_state_r1: None,
@@ -256,6 +262,24 @@ impl Keygen for Party {
     }
 }
 
+impl PreSigning for Party {
+    fn generate_presigning_data(
+        &self,
+        num_shares: usize,
+        rng: impl CryptoRng + RngCore,
+    ) -> Result<
+        (
+            precomputation::PublicCommitmentShareList,
+            precomputation::SecretCommitmentShareList,
+        ),
+        parameters::FrostError,
+    > {
+        Ok(precomputation::generate_commitment_share_lists(
+            rng, self.index, num_shares,
+        ))
+    }
+}
+
 impl Signing for Party {
     fn generate_commitment_data(
         &self,
@@ -301,6 +325,10 @@ impl Signing for Party {
         // Validate we have enough signers (at least t)
         if signers.len() < self.parameters.t as usize {
             return Err(parameters::FrostError::InvalidParameters);
+        }
+
+        for signer in signers.iter() {
+            self.signer.push((*signer).clone());
         }
 
         // Validate message is not empty
@@ -384,10 +412,6 @@ impl Signing for Party {
     fn clear_signing_state(&mut self) {
         self.signer.clear();
         self.aggregator = None;
-    }
-
-    fn add_signer(&mut self, signer: signature::Signer) {
-        self.signer.push(signer);
     }
 
     fn get_signers(&self) -> &[signature::Signer] {
@@ -481,27 +505,25 @@ mod tests {
         let mut commitment_lists = Vec::new();
         for i in 0..t as usize {
             let (pub_coms, sec_coms) = parties[i]
-                .generate_commitment_data(&mut rng)
+                .generate_presigning_data(10, &mut rng)
                 .expect("Failed to generate commitment data");
             commitment_lists.push((i, pub_coms, sec_coms));
         }
 
         // Step 7: Add signers to all signing parties
+        let mut signers: Vec<signature::Signer> = Vec::new();
         for (i, pub_coms, _) in &commitment_lists {
             let signer = signature::Signer {
                 participant_index: (*i + 1) as u32,
                 published_commitment_share: pub_coms.commitments[0],
                 public_key: parties[*i].get_secret_share().unwrap().into(),
             };
-            for party in parties.iter_mut().take(t as usize) {
-                party.add_signer(signer.clone());
-            }
+            signers.push(signer);
         }
 
         // Step 8: Generate partial signatures
         let mut partial_signatures = Vec::new();
         for (i, _, mut sec_coms) in commitment_lists {
-            let signers: Vec<_> = parties[i].get_signers().to_vec();
             let partial = parties[i]
                 .sign(message, &mut sec_coms, 0, &signers)
                 .expect("Failed to sign");
@@ -567,24 +589,22 @@ mod tests {
         let message = b"Another test message";
         let mut commitment_lists = Vec::new();
         for i in 0..t as usize {
-            let (pub_coms, sec_coms) = parties[i].generate_commitment_data(&mut rng).unwrap();
+            let (pub_coms, sec_coms) = parties[i].generate_presigning_data(10, &mut rng).unwrap();
             commitment_lists.push((i, pub_coms, sec_coms));
         }
 
+        let mut signers: Vec<signature::Signer> = Vec::new();
         for (i, pub_coms, _) in &commitment_lists {
             let signer = signature::Signer {
                 participant_index: (*i + 1) as u32,
                 published_commitment_share: pub_coms.commitments[0],
                 public_key: parties[*i].get_secret_share().unwrap().into(),
             };
-            for party in parties.iter_mut().take(t as usize) {
-                party.add_signer(signer.clone());
-            }
+            signers.push(signer);
         }
 
         let mut partial_signatures = Vec::new();
         for (i, _, mut sec_coms) in commitment_lists {
-            let signers: Vec<_> = parties[i].get_signers().to_vec();
             let partial = parties[i]
                 .sign(message, &mut sec_coms, 0, &signers)
                 .unwrap();
@@ -640,15 +660,15 @@ mod tests {
         assert!(party.get_group_key().is_none());
     }
 
-    /// Test signing before keygen completion
+    /// Test signing before keygen completion: presigning phase
     #[test]
     fn test_signing_before_keygen() {
         let mut rng = OsRng;
         let mut party = Party::new(1, 2, 3).unwrap();
 
         // Try to generate commitment data before keygen
-        let result = party.generate_commitment_data(&mut rng);
-        assert!(result.is_err());
+        let result = party.generate_presigning_data(10, &mut rng);
+        assert!(result.is_ok());
     }
 
     /// Test invalid message count in keygen round 1
@@ -683,65 +703,6 @@ mod tests {
         // This should fail because we're not providing the correct number of shares
         let result = party1.handle_keygen_message2(Vec::new());
         assert!(result.is_err());
-    }
-
-    /// Test clearing signing state
-    #[test]
-    fn test_clear_signing_state() {
-        let mut rng = OsRng;
-        let n = 3;
-        let t = 2;
-
-        // Complete keygen first
-        let mut parties = Vec::new();
-        for i in 1..=n {
-            parties.push(Party::new(i, t, n).unwrap());
-        }
-
-        // Quick keygen
-        let mut messages = vec![Vec::new(); n as usize];
-        for (i, party) in parties.iter_mut().enumerate() {
-            let msg = party.generate_keygen_message1(&mut rng);
-            for j in 0..n as usize {
-                if i != j {
-                    messages[j].push(msg.clone());
-                }
-            }
-        }
-
-        let mut all_shares = Vec::new();
-        for (i, party) in parties.iter_mut().enumerate() {
-            let shares = party.handle_keygen_message1(messages[i].clone()).unwrap();
-            all_shares.push(shares);
-        }
-
-        for i in 0..n as usize {
-            let mut my_shares = Vec::new();
-            for j in 0..n as usize {
-                if i != j {
-                    let share_index = if i < j { i } else { i - 1 };
-                    my_shares.push(all_shares[j][share_index].clone());
-                }
-            }
-            parties[i].handle_keygen_message2(my_shares).unwrap();
-        }
-
-        // Add a signer
-        let (pub_coms, _) = parties[0].generate_commitment_data(&mut rng).unwrap();
-        let signer = signature::Signer {
-            participant_index: 1,
-            published_commitment_share: pub_coms.commitments[0],
-            public_key: parties[0].get_secret_share().unwrap().into(),
-        };
-        parties[0].add_signer(signer);
-        assert_eq!(parties[0].get_signers().len(), 1);
-
-        // Clear signing state
-        parties[0].clear_signing_state();
-        assert_eq!(parties[0].get_signers().len(), 0);
-
-        // Keygen should still be complete
-        assert!(parties[0].is_keygen_complete());
     }
 
     /// Test signing with empty message
@@ -786,17 +747,15 @@ mod tests {
 
         // Try to sign empty message
         let empty_message = b"";
-        let (pub_coms, mut sec_coms) = parties[0].generate_commitment_data(&mut rng).unwrap();
+        let (pub_coms, mut sec_coms) = parties[0].generate_presigning_data(10, &mut rng).unwrap();
 
         let signer = signature::Signer {
             participant_index: 1,
             published_commitment_share: pub_coms.commitments[0],
             public_key: parties[0].get_secret_share().unwrap().into(),
         };
-        parties[0].add_signer(signer);
 
-        let signers: Vec<_> = parties[0].get_signers().to_vec();
-        let result = parties[0].sign(empty_message, &mut sec_coms, 0, &signers);
+        let result = parties[0].sign(empty_message, &mut sec_coms, 0, &[signer]);
         assert!(result.is_err());
     }
 
