@@ -12,9 +12,9 @@
 // Box
 #[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::boxed::Box;
-use zeroize::Zeroize;
 #[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::boxed::Box;
+use zeroize::Zeroize;
 
 // Ordering
 #[cfg(any(feature = "alloc", feature = "force-alloc"))]
@@ -505,6 +505,17 @@ impl SignatureAggregator<Initial<'_>> {
         self.state
             .public_keys
             .insert(&public_key.index, public_key.share);
+    }
+
+    pub fn add_signer(&mut self, signer: &Signer) {
+        assert_eq!(signer.participant_index, signer.public_key.index,
+                   "Tried to add signer with participant index {}, but public key is for participant with index {}",
+                   signer.participant_index, signer.public_key.index);
+
+        self.state.signers.push(signer.clone());
+        self.state
+            .public_keys
+            .insert(&signer.public_key.index, signer.public_key.share);
     }
 
     /// Get the list of partipating signers.

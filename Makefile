@@ -14,7 +14,7 @@ build-desktop-fixed-heap: $(SRC) $(CARGO)
 	cargo build --release --locked --no-default-features --features "std,fixed-heap,force-alloc" --lib
 
 build-desktop-ac-heap: $(SRC) $(CARGO)
-	cargo build --release --locked --no-default-features --features "std,ac-heap,force-alloc" --lib
+	cargo build --release --locked --no-default-features --features "std,ac-heap,force-alloc" --nocapture --lib
 
 build-ac: $(SRC) $(CARGO)
 	cargo build --release --locked --target thumbv7em-none-eabi --no-default-features --features "alloc,ac-heap" --lib

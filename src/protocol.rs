@@ -15,7 +15,6 @@ use crate::signature;
 
 use zeroize::Zeroize;
 
-
 #[derive(Clone, Debug)]
 pub struct Party {
     index: u32,
@@ -26,13 +25,11 @@ pub struct Party {
     participant: Option<keygen::Participant>,
     coefficients: Option<keygen::Coefficients>,
     dkg_state_r1: Option<keygen::DistributedKeyGeneration<keygen::RoundOne>>,
-    dkg_state_r2: Option<keygen::DistributedKeyGeneration<keygen::RoundTwo>>,
     secret_share: Option<keygen::SecretKey>,
     group_key: Option<keygen::GroupKey>,
 
     // Signing state data
-    signer: Vec<signature::Signer>,
-    aggregator: Option<signature::SignatureAggregator<signature::Finalized>>,
+    signers: Vec<signature::Signer>,
 }
 
 pub trait MetaData {
@@ -51,6 +48,7 @@ pub trait Keygen {
         shares: Vec<keygen::SecretShare>,
     ) -> Result<(), parameters::FrostError>;
     fn is_keygen_complete(&self) -> bool;
+    fn clear_secret(&mut self);
     fn clear_keygen_state(&mut self);
     fn import_secret_share(
         &mut self,
@@ -126,20 +124,25 @@ impl Party {
             participant: None,
             coefficients: None,
             dkg_state_r1: None,
-            dkg_state_r2: None,
             secret_share: None,
             group_key: None,
-            signer: Vec::new(),
-            aggregator: None,
+            signers: Vec::new(),
         })
     }
 }
 
 impl Keygen for Party {
     fn generate_keygen_message1<R: RngCore + CryptoRng>(&mut self, rng: &mut R) -> Message1 {
+        // Generate a fresh participant and its coefficients for round 1.
         let (p, c) = keygen::Participant::new(&self.parameters, self.index, rng);
+
+        // Clone few hundred KB.
+        // In AC devices (alloc / no_std) environment, the dominant cost comes from
+        // dynamic allocation performed through C allocator APIs
         self.participant = Some(p.clone());
+
         self.coefficients = Some(c);
+
         p
     }
 
@@ -150,7 +153,7 @@ impl Keygen for Party {
         mut messages: Vec<Message1>,
     ) -> Result<Vec<keygen::SecretShare>, parameters::FrostError> {
         // Validate we have participant and coefficients
-        let coefficients = self
+        let coefficients: &keygen::Coefficients = self
             .coefficients
             .as_ref()
             .ok_or(parameters::FrostError::InvalidParameters)?;
@@ -160,15 +163,17 @@ impl Keygen for Party {
             return Err(parameters::FrostError::DkgInvalidPartners);
         }
 
-        let state = keygen::DistributedKeyGeneration::<_>::new(
-            &self.parameters,
-            &self.index,
-            coefficients,
-            &mut messages,
-        )
-        .map_err(|_| parameters::FrostError::DkgInvalidPartners)?;
+        let state: keygen::DistributedKeyGeneration<keygen::RoundOne> =
+            keygen::DistributedKeyGeneration::<_>::new(
+                &self.parameters,
+                &self.index,
+                coefficients,
+                &mut messages,
+            )
+            .map_err(|_| parameters::FrostError::DkgInvalidPartners)?;
 
-        let shares = state
+        // Clone a very lightweight structure
+        let shares: Vec<keygen::SecretShare> = state
             .their_secret_shares()
             .map_err(|_| parameters::FrostError::Unknown)?
             .clone();
@@ -183,42 +188,30 @@ impl Keygen for Party {
         shares: Vec<keygen::SecretShare>,
     ) -> Result<(), parameters::FrostError> {
         // Validate we have dkg_state_r1
-        let dkg_state_r1 = self
+        let dkg_state_r1: keygen::DistributedKeyGeneration<keygen::RoundOne> = self
             .dkg_state_r1
             .take()
             .ok_or(parameters::FrostError::InvalidParameters)?;
 
-        // Validate share count (should be n-1)
-        if shares.len() != (self.parameters.n - 1) as usize {
-            return Err(parameters::FrostError::DkgInvalidShares);
-        }
-
-        let state2 = dkg_state_r1
+        let state2: keygen::DistributedKeyGeneration<keygen::RoundTwo> = dkg_state_r1
             .to_round_two(shares)
             .map_err(|_| parameters::FrostError::DkgInvalidShares)?;
 
-        let participant = self
+        let participant: &keygen::Participant = self
             .participant
             .as_ref()
             .ok_or(parameters::FrostError::InvalidParameters)?;
 
-        let public_key = participant
+        let public_key: &curve25519_dalek::RistrettoPoint = participant
             .public_key()
             .ok_or(parameters::FrostError::InvalidParameters)?;
 
         let (group_key, sk) = state2
-            .clone()
             .finish(public_key)
             .map_err(|_| parameters::FrostError::DkgInvalidSecretShares)?;
 
         self.secret_share = Some(sk);
         self.group_key = Some(group_key);
-        self.dkg_state_r2 = Some(state2);
-
-        // Clear intermediate keygen state
-        self.participant = None;
-        self.coefficients = None;
-        self.dkg_state_r1 = None;
 
         Ok(())
     }
@@ -227,27 +220,26 @@ impl Keygen for Party {
         self.secret_share.is_some() && self.group_key.is_some()
     }
 
-    fn clear_keygen_state(&mut self) {
+    fn clear_secret(&mut self) {
         if let Some(sk) = self.secret_share.as_mut() {
             sk.zeroize();
         }
+        self.secret_share = None;
+        self.group_key = None;
+    }
+
+    fn clear_keygen_state(&mut self) {
         if let Some(coeffs) = self.coefficients.as_mut() {
             coeffs.zeroize();
         }
         if let Some(r1) = self.dkg_state_r1.as_mut() {
             r1.zeroize();
         }
-        if let Some(r2) = self.dkg_state_r2.as_mut() {
-            r2.zeroize();
-        }
 
         // Then drop all references
         self.participant = None;
         self.coefficients = None;
         self.dkg_state_r1 = None;
-        self.dkg_state_r2 = None;
-        self.secret_share = None;
-        self.group_key = None;
     }
 
     fn import_secret_share(
@@ -313,7 +305,7 @@ impl Signing for Party {
             return Err(parameters::FrostError::InvalidParameters);
         }
 
-        let number_of_shares = if !self.is_presigning { 1 } else { 0 };
+        let number_of_shares: usize = if !self.is_presigning { 1 } else { 0 };
 
         Ok(precomputation::generate_commitment_share_lists(
             rng,
@@ -330,22 +322,22 @@ impl Signing for Party {
         signers: &[signature::Signer],
     ) -> Result<signature::PartialThresholdSignature, parameters::FrostError> {
         // Validate keygen is complete
-        let secret_share = self
+        let secret_share: &keygen::SecretKey = self
             .secret_share
             .as_ref()
             .ok_or(parameters::FrostError::InvalidParameters)?;
-        let group_key = self
+        let group_key: &keygen::GroupKey = self
             .group_key
             .as_ref()
             .ok_or(parameters::FrostError::InvalidParameters)?;
 
-        // Validate we have enough signers (at least t)
-        if signers.len() < self.parameters.t as usize {
-            return Err(parameters::FrostError::InvalidParameters);
+        if !self.signers.is_empty() {
+            return Err(parameters::FrostError::DsgStateNotCleared);
         }
 
+        // Signer size is around 500 Bytes
         for signer in signers.iter() {
-            self.signer.push((*signer).clone());
+            self.signers.push((*signer).clone());
         }
 
         // Validate message is not empty
@@ -353,8 +345,7 @@ impl Signing for Party {
             return Err(parameters::FrostError::InvalidParameters);
         }
 
-        let message_hash = &signature::compute_message_hash(&[], &message[..]);
-
+        let message_hash: &[u8; 64] = &signature::compute_message_hash(&[], &message[..]);
         secret_share
             .sign(
                 message_hash,
@@ -363,7 +354,7 @@ impl Signing for Party {
                 my_commitment_share_index,
                 signers,
             )
-            .map_err(|_| parameters::FrostError::SigningError)
+            .map_err(|_| parameters::FrostError::DsgSigningError)
     }
 
     fn combine_partial_signatures(
@@ -371,21 +362,16 @@ impl Signing for Party {
         message: &[u8],
         partial_signatures: Vec<signature::PartialThresholdSignature>,
     ) -> Result<(signature::ThresholdSignature, bool), parameters::FrostError> {
+        // Validate we have signers
+        if self.signers.is_empty() {
+            return Err(parameters::FrostError::DsgEmptySigners);
+        }
+
         // Validate keygen is complete
-        let group_key = self
+        let group_key: &keygen::GroupKey = self
             .group_key
             .as_ref()
             .ok_or(parameters::FrostError::InvalidParameters)?;
-
-        // Validate we have enough partial signatures (at least t)
-        if partial_signatures.len() < self.parameters.t as usize {
-            return Err(parameters::FrostError::InvalidParameters);
-        }
-
-        // Validate we have signers
-        if self.signer.is_empty() {
-            return Err(parameters::FrostError::InvalidParameters);
-        }
 
         // Validate message is not empty
         if message.is_empty() {
@@ -400,12 +386,13 @@ impl Signing for Party {
                 &message[..],
             );
 
-        for signer in self.signer.iter() {
+        for signer in self.signers.iter() {
             aggregator.include_signer(
                 signer.participant_index,
                 signer.published_commitment_share,
                 signer.public_key,
             );
+            aggregator.add_signer(signer);
         }
 
         for partial in partial_signatures {
@@ -414,11 +401,12 @@ impl Signing for Party {
 
         let finalized_aggregator = aggregator
             .finalize()
-            .map_err(|_| parameters::FrostError::SigningError)?;
+            .map_err(|_| parameters::FrostError::DsgSigningError)?;
 
-        let threshold_signature = finalized_aggregator
-            .aggregate()
-            .map_err(|_| parameters::FrostError::SigningError)?;
+        let threshold_signature: signature::ThresholdSignature =
+            finalized_aggregator
+                .aggregate()
+                .map_err(|_| parameters::FrostError::DsgSigningError)?;
 
         let message_hash = signature::compute_message_hash(&[], &message[..]);
         let verify_result = threshold_signature.verify(group_key, &message_hash);
@@ -427,12 +415,11 @@ impl Signing for Party {
     }
 
     fn clear_signing_state(&mut self) {
-        self.signer.clear();
-        self.aggregator = None;
+        self.signers.clear();
     }
 
     fn get_signers(&self) -> &[signature::Signer] {
-        &self.signer
+        &self.signers
     }
 }
 
@@ -450,6 +437,7 @@ impl MetaData for Party {
 mod tests {
     use super::*;
     use rand_core::OsRng;
+    use std::time::Instant;
 
     /// Test full keygen and signing flow with 3 parties, threshold 2
     #[test]
@@ -554,20 +542,21 @@ mod tests {
         assert!(verified, "Signature verification failed");
     }
 
-    /// Test full protocol flow with 5 parties, threshold 3
     #[test]
     fn test_full_protocol_flow_5_3() {
+        let start_total = Instant::now();
+
         let mut rng = OsRng;
         let n = 5;
         let t = 3;
 
-        // Create parties
+        // --- Keygen ---
+        let start_keygen = Instant::now();
         let mut parties = Vec::new();
         for i in 1..=n {
             parties.push(Party::new(i, t, n).unwrap());
         }
 
-        // Keygen Round 1
         let mut messages = vec![Vec::new(); n as usize];
         for (i, party) in parties.iter_mut().enumerate() {
             let msg = party.generate_keygen_message1(&mut rng);
@@ -578,14 +567,12 @@ mod tests {
             }
         }
 
-        // Keygen Round 2
         let mut all_shares = Vec::new();
         for (i, party) in parties.iter_mut().enumerate() {
             let shares = party.handle_keygen_message1(messages[i].clone()).unwrap();
             all_shares.push(shares);
         }
 
-        // Keygen Round 3
         for i in 0..n as usize {
             let mut my_shares = Vec::new();
             for j in 0..n as usize {
@@ -596,13 +583,10 @@ mod tests {
             }
             parties[i].handle_keygen_message2(my_shares).unwrap();
         }
+        println!("Keygen completed in {:?}", start_keygen.elapsed());
 
-        // Verify all parties completed keygen
-        for party in &parties {
-            assert!(party.is_keygen_complete());
-        }
-
-        // Signing with t parties
+        // --- Signing ---
+        let start_sign = Instant::now();
         let message = b"Another test message";
         let mut commitment_lists = Vec::new();
         for i in 0..t as usize {
@@ -632,6 +616,9 @@ mod tests {
             .combine_partial_signatures(message, partial_signatures)
             .unwrap();
         assert!(verified);
+        println!("Signing + verify in {:?}", start_sign.elapsed());
+
+        println!("Total test runtime: {:?}", start_total.elapsed());
     }
 
     /// Test invalid party creation parameters

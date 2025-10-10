@@ -699,8 +699,6 @@ pub(crate) fn calculate_lagrange_coefficients(
 mod test {
     use super::*;
 
-    use crate::keygen::calculate_lagrange_coefficients;
-
     #[cfg(feature = "std")]
     use crate::precomputation::generate_commitment_share_lists;
     #[cfg(feature = "std")]

@@ -4,6 +4,7 @@ compile_error!("This module requires heap. Enable `std` features.");
 use std::boxed::Box;
 use std::io::{self, Write};
 
+use curve25519_dalek::digest::crypto_common::Key;
 use frost_dalek::protocol::PreSigning;
 use rand::rngs::OsRng;
 
@@ -11,9 +12,16 @@ use frost_dalek;
 
 const PAGE_SIZE: usize = 4096; // 4 KB per page
 
+use std::mem;
+
 fn main() {
     #[cfg(all(feature = "force-alloc", feature = "fixed-heap"))]
     frost_dalek::init_heap();
+
+    println!(
+        "Size of MyStruct: {} bytes",
+        mem::size_of::<frost_dalek::Signer>()
+    );
 
     println!("Custom allocator ready. Each page = {} bytes", PAGE_SIZE);
     println!("Choose mode:");

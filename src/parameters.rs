@@ -11,7 +11,6 @@
 
 /// The configuration parameters for conducting the process of creating a
 /// threshold signature.
-
 use zeroize::Zeroize;
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Default, Zeroize)]
 pub struct Parameters {
@@ -23,10 +22,12 @@ pub struct Parameters {
 
 #[derive(Copy, Clone, Debug)]
 pub enum FrostError {
+    InvalidParameters,
     DkgInvalidPartners,
     DkgInvalidShares,
     DkgInvalidSecretShares,
-    InvalidParameters,
-    SigningError,
+    DsgSigningError,
+    DsgEmptySigners,
+    DsgStateNotCleared,
     Unknown,
 }
