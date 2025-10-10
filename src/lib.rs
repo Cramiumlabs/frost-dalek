@@ -689,13 +689,19 @@ pub mod allocator;
 pub mod ac_heap;
 
 #[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
-pub use ac_heap::{init_heap, heap_stats};
+pub use ac_heap::{heap_stats, init_heap};
 
-#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "fixed-heap"))]
+#[cfg(all(
+    any(feature = "alloc", feature = "force-alloc"),
+    feature = "fixed-heap"
+))]
 pub mod fixed_heap;
 
-#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "fixed-heap"))]
-pub use fixed_heap::{init_heap, heap_stats};
+#[cfg(all(
+    any(feature = "alloc", feature = "force-alloc"),
+    feature = "fixed-heap"
+))]
+pub use fixed_heap::{heap_stats, init_heap};
 
 #[cfg(all(test, feature = "std"))]
 #[macro_use]
@@ -705,6 +711,7 @@ pub mod keygen;
 pub mod nizk;
 pub mod parameters;
 pub mod precomputation;
+pub mod protocol;
 
 #[cfg(any(feature = "alloc", feature = "std"))]
 pub mod signature;
@@ -713,7 +720,7 @@ pub use keygen::*;
 pub use parameters::*;
 pub use precomputation::generate_commitment_share_lists;
 
-#[cfg(any(feature = "alloc", feature = "std"))]
+#[cfg(any(feature = "alloc", feature = "force-alloc", feature = "std"))]
 pub use signature::*;
 
 #[cfg(all(test, feature = "force-alloc"))]

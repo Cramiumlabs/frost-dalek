@@ -4,18 +4,24 @@ compile_error!("This module requires heap. Enable `std` features.");
 use std::boxed::Box;
 use std::io::{self, Write};
 
+use curve25519_dalek::digest::crypto_common::Key;
+use frost_dalek::protocol::PreSigning;
 use rand::rngs::OsRng;
 
-use frost_dalek::{
-    compute_message_hash, generate_commitment_share_lists, DistributedKeyGeneration, Parameters,
-    Participant, SignatureAggregator,
-};
+use frost_dalek;
 
 const PAGE_SIZE: usize = 4096; // 4 KB per page
 
+use std::mem;
+
 fn main() {
-    #[cfg(all(feature = "force-alloc", feature="fixed-heap"))]
+    #[cfg(all(feature = "force-alloc", feature = "fixed-heap"))]
     frost_dalek::init_heap();
+
+    println!(
+        "Size of MyStruct: {} bytes",
+        mem::size_of::<frost_dalek::Signer>()
+    );
 
     println!("Custom allocator ready. Each page = {} bytes", PAGE_SIZE);
     println!("Choose mode:");
@@ -119,117 +125,171 @@ fn memory_test() {
 }
 
 fn frost_test(n: u32, t: u32) {
+    use frost_dalek::protocol::{Keygen, Party, Signing};
+
     let mut rng = OsRng;
-    let params = Parameters { n, t };
 
-    let mut participants: Vec<Participant> = Vec::new();
-    let mut coeffs_vec = Vec::new();
+    println!("\n=== FROST Protocol Test Using protocol::Party ===");
+    println!("Parameters: n={}, t={}", n, t);
 
+    // Create parties
+    println!("\n[Step 1] Creating {} parties...", n);
+    let mut parties: Vec<Party> = Vec::new();
     for i in 1..=n {
-        let (p, coeffs) = Participant::new(&params, i, &mut rng);
-        participants.push(p);
-        coeffs_vec.push(coeffs);
+        match Party::new(i, t, n) {
+            Ok(party) => {
+                println!("  Party {} created successfully", i);
+                parties.push(party);
+            }
+            Err(e) => {
+                println!("  Error creating party {}: {:?}", i, e);
+                return;
+            }
+        }
     }
 
-    let mut dkg_states = Vec::new();
-    let mut secret_shares_all: Vec<Vec<_>> = Vec::new();
+    // === Keygen Phase ===
+    println!("\n[Step 2] Keygen Phase - Round 1: Generating commitments...");
+    let mut messages: Vec<Vec<frost_dalek::keygen::Participant>> = vec![Vec::new(); n as usize];
 
-    for i in 0..n as usize {
-        let mut others: Vec<Participant> = participants
-            .iter()
-            .enumerate()
-            .filter(|(j, _)| *j != i)
-            .map(|(_, p)| p.clone())
-            .collect();
+    for (i, party) in parties.iter_mut().enumerate() {
+        let message1 = party.generate_keygen_message1(&mut rng);
+        println!("  Party {} generated commitment", i + 1);
 
-        let state = DistributedKeyGeneration::<_>::new(
-            &params,
-            &participants[i].index,
-            &coeffs_vec[i],
-            &mut others,
-        )
-        .unwrap();
-
-        let shares = state.their_secret_shares().unwrap().clone();
-        dkg_states.push(state);
-        secret_shares_all.push(shares);
+        // Broadcast to all other parties
+        for j in 0..n as usize {
+            if i != j {
+                messages[j].push(message1.clone());
+            }
+        }
     }
 
-    let mut round2_states = Vec::new();
+    println!("\n[Step 3] Keygen Phase - Round 2: Processing commitments and generating shares...");
+    let mut all_shares: Vec<Vec<frost_dalek::keygen::SecretShare>> = Vec::new();
+
+    for (i, party) in parties.iter_mut().enumerate() {
+        match party.handle_keygen_message1(messages[i].clone()) {
+            Ok(shares) => {
+                println!(
+                    "  Party {} processed commitments and generated {} shares",
+                    i + 1,
+                    shares.len()
+                );
+                all_shares.push(shares);
+            }
+            Err(e) => {
+                println!("  Error in party {} round 1: {:?}", i + 1, e);
+                return;
+            }
+        }
+    }
+
+    println!("\n[Step 4] Keygen Phase - Round 3: Distributing and processing shares...");
     for i in 0..n as usize {
         let mut my_shares = Vec::new();
         for j in 0..n as usize {
             if i == j {
                 continue;
             }
-            // Each "j" participant has distributed shares, pick the one for "i"
-            // The index depends on whether i comes before or after j in the list
             let share_index = if i < j { i } else { i - 1 };
-            let share = secret_shares_all[j][share_index].clone();
-            my_shares.push(share);
+            my_shares.push(all_shares[j][share_index].clone());
         }
-        let state2 = dkg_states[i].clone().to_round_two(my_shares).unwrap();
-        round2_states.push(state2);
-    }
 
-    let mut secret_keys = Vec::new();
-    let mut group_key_opt = None;
-    for i in 0..n as usize {
-        let (group_key, sk) = round2_states[i]
-            .clone()
-            .finish(participants[i].public_key().unwrap())
-            .unwrap();
-        secret_keys.push(sk);
-        if group_key_opt.is_none() {
-            group_key_opt = Some(group_key);
+        match parties[i].handle_keygen_message2(my_shares) {
+            Ok(_) => {
+                println!("  Party {} completed keygen", i + 1);
+            }
+            Err(e) => {
+                println!("  Error in party {} round 2: {:?}", i + 1, e);
+                return;
+            }
         }
     }
-    let group_key = group_key_opt.unwrap();
 
-    // === Signing ===
-    let context = b"GENERIC CONTEXT";
-    let message = b"Generalized FROST test message";
-
-    let mut aggregator = SignatureAggregator::new(params, group_key, &context[..], &message[..]);
-
-    let mut signer_indices = Vec::new();
-    for i in 0..t as usize {
-        let (pub_coms, sec_coms) = generate_commitment_share_lists(&mut OsRng, (i + 1) as u32, 1);
-        aggregator.include_signer(
-            (i + 1) as u32,
-            pub_coms.commitments[0],
-            (&secret_keys[i]).into(),
-        );
-        signer_indices.push((i, sec_coms));
+    // Verify keygen completion
+    println!("\n[Step 5] Verifying keygen completion...");
+    for (i, party) in parties.iter().enumerate() {
+        if party.is_keygen_complete() {
+            println!("  Party {} keygen complete ✓", i + 1);
+        } else {
+            println!("  Party {} keygen NOT complete ✗", i + 1);
+            return;
+        }
     }
 
-    let signers = aggregator.get_signers();
-    let message_hash = compute_message_hash(&context[..], &message[..]);
+    let _group_key = parties[0].get_group_key().unwrap().clone();
+    println!("\n  Group key established successfully!");
 
-    // Each signer creates a partial signature
-    let mut partial_signatures = Vec::new();
-    for (i, mut sec_coms) in signer_indices {
-        let partial = secret_keys[i]
-            .sign(&message_hash, &group_key, &mut sec_coms, 0, signers)
-            .unwrap();
-        partial_signatures.push(partial);
-    }
-
-    for partial in partial_signatures {
-        aggregator.include_partial_signature(partial);
-    }
-
-    let aggregator = aggregator.finalize().unwrap();
-    let threshold_signature = aggregator.aggregate().unwrap();
-    let verification_result = threshold_signature.verify(&group_key, &message_hash);
-
+    // === Signing Phase ===
     println!(
-        "FROST(n={}, t={}): signature verification = {}",
-        n,
-        t,
-        verification_result.is_ok()
+        "\n[Step 6] Signing Phase: Generating commitments for {} signers...",
+        t
     );
+    let message = b"Test message for FROST threshold signature";
+    println!("  Message: {:?}", String::from_utf8_lossy(message));
+
+    let mut commitment_lists = Vec::new();
+    for i in 0..t as usize {
+        match parties[i].generate_presigning_data(1, &mut rng) {
+            Ok((pub_coms, sec_coms)) => {
+                println!("  Party {} generated commitment data", i + 1);
+                commitment_lists.push((i, pub_coms, sec_coms));
+            }
+            Err(e) => {
+                println!("  Error generating commitment for party {}: {:?}", i + 1, e);
+                return;
+            }
+        }
+    }
+
+    println!("\n[Step 7] Prepare signers vector");
+    let mut signers: Vec<frost_dalek::Signer> = Vec::new();
+    for (i, pub_coms, _) in &commitment_lists {
+        let signer = frost_dalek::signature::Signer {
+            participant_index: (*i + 1) as u32,
+            published_commitment_share: pub_coms.commitments[0],
+            public_key: parties[*i].get_secret_share().unwrap().into(),
+        };
+        signers.push(signer);
+    }
+
+    println!("\n[Step 8] Generating partial signatures...");
+    let mut partial_signatures = Vec::new();
+    for (i, _, mut sec_coms) in commitment_lists {
+        // Clone signers to avoid borrow checker issues
+        match parties[i].sign(message, &mut sec_coms, 0, &signers) {
+            Ok(partial) => {
+                println!("  Party {} created partial signature", i + 1);
+                partial_signatures.push(partial);
+            }
+            Err(e) => {
+                println!("  Error signing for party {}: {:?}", i + 1, e);
+                return;
+            }
+        }
+    }
+
+    println!("\n[Step 9] Combining partial signatures...");
+    match parties[0].combine_partial_signatures(message, partial_signatures) {
+        Ok((_threshold_signature, verified)) => {
+            println!("\n=== FROST Test Results ===");
+            println!("Threshold signature created successfully!");
+            println!(
+                "Signature verification: {}",
+                if verified { "✓ PASSED" } else { "✗ FAILED" }
+            );
+            println!("Parameters: n={}, t={}", n, t);
+
+            if verified {
+                println!("\n🎉 FROST protocol test completed successfully!");
+            }
+        }
+        Err(e) => {
+            println!("  Error combining signatures: {:?}", e);
+        }
+    }
 }
+
 #[cfg(feature = "force-alloc")]
 fn print_heap_stats(prefix: &str) {
     let (size, used, free) = frost_dalek::heap_stats();

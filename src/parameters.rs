@@ -11,10 +11,23 @@
 
 /// The configuration parameters for conducting the process of creating a
 /// threshold signature.
-#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
+use zeroize::Zeroize;
+#[derive(Copy, Clone, Debug, Eq, Hash, PartialEq, Default, Zeroize)]
 pub struct Parameters {
     /// The number of participants in the scheme.
     pub n: u32,
     /// The threshold required for a successful signature.
     pub t: u32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum FrostError {
+    InvalidParameters,
+    DkgInvalidPartners,
+    DkgInvalidShares,
+    DkgInvalidSecretShares,
+    DsgSigningError,
+    DsgEmptySigners,
+    DsgStateNotCleared,
+    Unknown,
 }

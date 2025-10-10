@@ -14,6 +14,7 @@
 use alloc::boxed::Box;
 #[cfg(all(feature = "std", not(feature = "force-alloc")))]
 use std::boxed::Box;
+use zeroize::Zeroize;
 
 // Ordering
 #[cfg(any(feature = "alloc", feature = "force-alloc"))]
@@ -41,6 +42,7 @@ use curve25519_dalek::scalar::Scalar;
 use sha2::Digest;
 use sha2::Sha512;
 
+use crate::keygen;
 use crate::keygen::GroupKey;
 use crate::keygen::IndividualPublicKey;
 use crate::parameters::Parameters;
@@ -53,13 +55,15 @@ pub use crate::keygen::SecretKey;
 //     signer's long-term secret key; it must be prevented at all costs.
 
 /// An individual signer in the threshold signature scheme.
-#[derive(Clone, Copy, Debug, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq)]
 pub struct Signer {
     /// The participant index of this signer.
     pub participant_index: u32,
     /// One of the commitments that were published by each signing participant
     /// in the pre-computation phase.
     pub published_commitment_share: (RistrettoPoint, RistrettoPoint),
+
+    pub public_key: keygen::IndividualPublicKey,
 }
 
 impl Ord for Signer {
@@ -181,14 +185,14 @@ impl_indexed_hashmap!(Type = SignerRs, Item = RistrettoPoint);
 
 /// A type for storing signers' partial threshold signatures along with the
 /// respective signer participant index.
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PartialThresholdSignatures(pub(crate) HashMap<[u8; 4], Scalar>);
 
 impl_indexed_hashmap!(Type = PartialThresholdSignatures, Item = Scalar);
 
 /// A type for storing signers' individual public keys along with the respective
 /// signer participant index.
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct IndividualPublicKeys(pub(crate) HashMap<[u8; 4], RistrettoPoint>);
 
 impl_indexed_hashmap!(Type = IndividualPublicKeys, Item = RistrettoPoint);
@@ -358,7 +362,7 @@ impl SecretKey {
 pub trait Aggregator {}
 
 /// The internal state of a signature aggregator.
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct AggregatorState {
     /// The protocol instance parameters.
     pub(crate) parameters: Parameters,
@@ -378,7 +382,7 @@ pub(crate) struct AggregatorState {
 /// [`PartialThresholdSignature`] and creates the final [`ThresholdSignature`].
 /// The signature aggregator may even be one of the \\(t\\) participants in this
 /// signing operation.
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SignatureAggregator<A: Aggregator> {
     /// The aggregator's actual state, shared across types.
     pub(crate) state: Box<AggregatorState>,
@@ -388,7 +392,7 @@ pub struct SignatureAggregator<A: Aggregator> {
 
 /// The initial state for a [`SignatureAggregator`], which may include invalid
 /// or non-sensical data.
-#[derive(Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Initial<'sa> {
     /// An optional context string for computing the message hash.
     pub(crate) context: &'sa [u8],
@@ -412,13 +416,21 @@ impl Aggregator for Initial<'_> {}
 /// the partial signatures:
 ///
 /// * Any signer could have contributed a malformed partial signature.
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finalized {
     /// The hashed context and message for signing.
     pub(crate) message_hash: [u8; 64],
 }
 
 impl Aggregator for Finalized {}
+
+impl Default for Finalized {
+    fn default() -> Self {
+        Self {
+            message_hash: [0u8; 64],
+        }
+    }
+}
 
 impl SignatureAggregator<Initial<'_>> {
     /// Construct a new signature aggregator from some protocol instantiation
@@ -488,10 +500,22 @@ impl SignatureAggregator<Initial<'_>> {
         self.state.signers.push(Signer {
             participant_index,
             published_commitment_share,
+            public_key,
         });
         self.state
             .public_keys
             .insert(&public_key.index, public_key.share);
+    }
+
+    pub fn add_signer(&mut self, signer: &Signer) {
+        assert_eq!(signer.participant_index, signer.public_key.index,
+                   "Tried to add signer with participant index {}, but public key is for participant with index {}",
+                   signer.participant_index, signer.public_key.index);
+
+        self.state.signers.push(signer.clone());
+        self.state
+            .public_keys
+            .insert(&signer.public_key.index, signer.public_key.share);
     }
 
     /// Get the list of partipating signers.
@@ -705,10 +729,8 @@ impl ThresholdSignature {
 }
 
 #[cfg(test)]
-#[cfg(feature="std")]
+#[cfg(feature = "std")]
 mod test {
-    use std::env::consts::OS;
-
     use super::*;
 
     use crate::keygen::Participant;
