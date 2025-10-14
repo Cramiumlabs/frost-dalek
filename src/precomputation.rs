@@ -9,10 +9,10 @@
 
 //! Precomputation for one-round signing.
 
-#[cfg(feature = "std")]
-use std::vec::Vec;
+#[cfg(all(feature = "std", not(feature = "force-alloc")))]
+use std::boxed::Box;
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
 use alloc::vec::Vec;
 
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_TABLE;
@@ -20,28 +20,40 @@ use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use curve25519_dalek::traits::Identity;
 
-use rand::CryptoRng;
-use rand::Rng;
+use rand_core::{CryptoRng, RngCore};
 
 use subtle::Choice;
 use subtle::ConstantTimeEq;
 
 use zeroize::Zeroize;
 
-#[derive(Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Debug)]
 pub(crate) struct NoncePair(pub(crate) Scalar, pub(crate) Scalar);
 
 impl NoncePair {
-    pub fn new(mut csprng: impl CryptoRng + Rng) -> Self {
-        NoncePair(Scalar::random(&mut csprng), Scalar::random(&mut csprng))
+    pub fn new(mut csprng: impl CryptoRng + RngCore) -> Self {
+        let mut bytes1 = [0u8; 64];
+        let mut bytes2 = [0u8; 64];
+        csprng.fill_bytes(&mut bytes1);
+        csprng.fill_bytes(&mut bytes2);
+        NoncePair(
+            Scalar::from_bytes_mod_order_wide(&bytes1),
+            Scalar::from_bytes_mod_order_wide(&bytes2),
+        )
+    }
+}
+
+impl Drop for NoncePair {
+    fn drop(&mut self) {
+        self.0 = Scalar::ZERO;
+        self.1 = Scalar::ZERO;
     }
 }
 
 impl From<NoncePair> for CommitmentShare {
     fn from(other: NoncePair) -> CommitmentShare {
-        let x = &RISTRETTO_BASEPOINT_TABLE * &other.0;
-        let y = &RISTRETTO_BASEPOINT_TABLE * &other.1;
+        let x = &other.0 * RISTRETTO_BASEPOINT_TABLE;
+        let y = &other.1 * RISTRETTO_BASEPOINT_TABLE;
 
         CommitmentShare {
             hiding: Commitment {
@@ -65,30 +77,22 @@ pub(crate) struct Commitment {
     pub(crate) sealed: RistrettoPoint,
 }
 
-impl Zeroize for Commitment {
-    fn zeroize(&mut self) {
-        self.nonce.zeroize();
-        self.sealed = RistrettoPoint::identity();
-    }
-}
-
 impl Drop for Commitment {
     fn drop(&mut self) {
-        self.zeroize();
+        self.nonce = Scalar::ZERO;
+        self.sealed = RistrettoPoint::identity();
     }
 }
 
 /// Test equality in constant-time.
 impl ConstantTimeEq for Commitment {
     fn ct_eq(&self, other: &Commitment) -> Choice {
-        self.nonce.ct_eq(&other.nonce) &
-            self.sealed.compress().ct_eq(&other.sealed.compress())
+        self.nonce.ct_eq(&other.nonce) & self.sealed.compress().ct_eq(&other.sealed.compress())
     }
 }
 
 /// A precomputed commitment share.
-#[derive(Clone, Debug, Zeroize)]
-#[zeroize(drop)]
+#[derive(Clone, Debug)]
 pub struct CommitmentShare {
     /// The hiding commitment.
     ///
@@ -147,11 +151,10 @@ pub struct PublicCommitmentShareList {
 ///
 /// A tuple of ([`PublicCommitmentShareList`], [`SecretCommitmentShareList`]).
 pub fn generate_commitment_share_lists(
-    mut csprng: impl CryptoRng + Rng,
+    mut csprng: impl CryptoRng + RngCore,
     participant_index: u32,
     number_of_shares: usize,
-) -> (PublicCommitmentShareList, SecretCommitmentShareList)
-{
+) -> (PublicCommitmentShareList, SecretCommitmentShareList) {
     let mut commitments: Vec<CommitmentShare> = Vec::with_capacity(number_of_shares);
 
     for _ in 0..number_of_shares {
@@ -164,8 +167,13 @@ pub fn generate_commitment_share_lists(
         published.push(commitment.publish());
     }
 
-    (PublicCommitmentShareList { participant_index, commitments: published },
-     SecretCommitmentShareList { commitments })
+    (
+        PublicCommitmentShareList {
+            participant_index,
+            commitments: published,
+        },
+        SecretCommitmentShareList { commitments },
+    )
 }
 
 // XXX TODO This should maybe be a field on SecretKey with some sort of
@@ -195,6 +203,7 @@ impl SecretCommitmentShareList {
 }
 
 #[cfg(test)]
+#[cfg(feature = "std")]
 mod test {
     use super::*;
 
@@ -212,15 +221,19 @@ mod test {
 
     #[test]
     fn commitment_share_list_generate() {
-        let (public_share_list, secret_share_list) = generate_commitment_share_lists(&mut OsRng, 0, 5);
+        let (public_share_list, secret_share_list) =
+            generate_commitment_share_lists(&mut OsRng, 0, 5);
 
-        assert_eq!(public_share_list.commitments[0].0.compress(),
-                   (&secret_share_list.commitments[0].hiding.nonce * &RISTRETTO_BASEPOINT_TABLE).compress());
+        assert_eq!(
+            public_share_list.commitments[0].0.compress(),
+            (&secret_share_list.commitments[0].hiding.nonce * RISTRETTO_BASEPOINT_TABLE).compress()
+        );
     }
 
     #[test]
     fn drop_used_commitment_shares() {
-        let (_public_share_list, mut secret_share_list) = generate_commitment_share_lists(&mut OsRng, 3, 8);
+        let (_public_share_list, mut secret_share_list) =
+            generate_commitment_share_lists(&mut OsRng, 3, 8);
 
         assert!(secret_share_list.commitments.len() == 8);
 

@@ -50,13 +50,13 @@
 //! of scope, they each need to agree upon their *participant index* which is
 //! some non-zero integer unique to each of them (these are the `1`, `2`, and
 //! `3` in the following examples).
-//! 
+//!
 //! ```rust
 //! # use frost_dalek::Parameters;
 //! use frost_dalek::Participant;
 //! #
 //! # let params = Parameters { t: 2, n: 3 };
-//! 
+//!
 //! let (alice, alice_coefficients) = Participant::new(&params, 1);
 //! let (bob, bob_coefficients) = Participant::new(&params, 2);
 //! let (carol, carol_coefficients) = Participant::new(&params, 3);
@@ -669,41 +669,69 @@
 //! implementation uses `HashMap`s for the signature creation and aggregation
 //! protocols, and thus requires the standard library.
 
-#![no_std]
-#![warn(future_incompatible)]
-#![deny(missing_docs)]
-#![allow(non_snake_case)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(not(any(feature = "std", feature = "alloc")))]
-compile_error!("Either feature \"std\" or \"alloc\" must be enabled for this crate.");
+#[cfg(not(any(feature = "std", feature = "alloc", feature = "force-alloc")))]
+compile_error!(
+    "This module requires heap. Enable one of: `std`, `alloc`, or `std with force-alloc` features."
+);
 
-// We use the vec! macro in unittests.
-#[cfg(any(test, feature = "std"))]
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+extern crate alloc;
+
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+mod panic;
+
+#[cfg(any(feature = "alloc", feature = "force-alloc"))]
+pub mod allocator;
+
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
+pub mod ac_heap;
+
+#[cfg(all(any(feature = "alloc", feature = "force-alloc"), feature = "ac-heap"))]
+pub use ac_heap::{heap_stats, init_heap};
+
+#[cfg(all(
+    any(feature = "alloc", feature = "force-alloc"),
+    feature = "fixed-heap"
+))]
+pub mod fixed_heap;
+
+#[cfg(all(
+    any(feature = "alloc", feature = "force-alloc"),
+    feature = "fixed-heap"
+))]
+pub use fixed_heap::{heap_stats, init_heap};
+
+#[cfg(all(test, feature = "std"))]
 #[macro_use]
 extern crate std;
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
 pub mod keygen;
+pub mod nizk;
 pub mod parameters;
 pub mod precomputation;
-pub mod nizk;
+pub mod protocol;
 
-// The signing protocol uses Hashmap (currently for both the signature aggregator
-// and signers), which requires std.
-#[cfg(feature = "std")]
+#[cfg(any(feature = "alloc", feature = "std"))]
 pub mod signature;
 
-pub use keygen::DistributedKeyGeneration;
-pub use keygen::GroupKey;
-pub use keygen::IndividualPublicKey;
-pub use keygen::Participant;
-pub use keygen::SecretKey as IndividualSecretKey;
-pub use parameters::Parameters;
+pub use keygen::*;
+pub use parameters::*;
 pub use precomputation::generate_commitment_share_lists;
 
-#[cfg(feature = "std")]
-pub use signature::compute_message_hash;
-#[cfg(feature = "std")]
-pub use signature::SignatureAggregator;
+#[cfg(any(feature = "alloc", feature = "force-alloc", feature = "std"))]
+pub use signature::*;
+
+#[cfg(all(test, feature = "force-alloc"))]
+mod test_init {
+    use super::*;
+
+    use ctor::ctor;
+
+    #[ctor]
+    fn init_allocator_before_tests() {
+        init_heap();
+        println!("[ctor] custom allocator initialized before tests");
+    }
+}

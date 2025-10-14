@@ -13,34 +13,54 @@ keywords = ["cryptography", "frost", "ristretto", "signature", "threshold-signat
 categories = ["cryptography"]
 exclude = [ ".gitignore" ]
 
+[lib]
+crate-type = ["rlib", "staticlib"]
+doctest = false
+
+[[bin]]
+name = "frost-cli"
+path = "src/main.rs"
+test = false
+
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "/opt/rustwide/workdir/docs/assets/rustdoc-include-katex-header.html"]
 
 [dependencies]
-curve25519-dalek = { version = "3", default-features = false }
-rand = { version = "0.7" }
-sha2 = { version = "0.9" }
+curve25519-dalek = { version = "4.1.3", default-features = false, features = ["alloc", "precomputed-tables"] }
+rand_core = { version = "0.5", default-features = false }
+sha2 = { version = "0.9.8", default-features = false }
 subtle = { version = "2.4", default-features = false }
 zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
+linked_list_allocator = { version = "0.10.2"}
+hashbrown = { version = "0.14", default-features = false, features = ["ahash", "alloc"] }
+rand = {version = "0.7", default-features = false, features = ["getrandom"], optional = true}
+getrandom = { version = "0.1", optional = true }
+
 
 [dev-dependencies]
+rand = {version = "0.7", default-features = false}
 criterion = { version = "0.3" }
-ed25519-dalek = { version = "1", default-features = false }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc"] }
+linked_list_allocator = { version = "0.10.2"}
+ctor = "0.2"
+getrandom = { version = "0.1", features = ["dummy"] }
 
-[[bench]]
-name = "dalek_benchmarks"
-harness = false
 
 [features]
-default = ["std", "u64_backend"]
+default = ["std","force-alloc", "ac-heap"]
 
-nightly = ["curve25519-dalek/nightly", "ed25519-dalek/nightly"]
-std = ["curve25519-dalek/std", "ed25519-dalek/std"]
-alloc = ["curve25519-dalek/alloc", "ed25519-dalek/alloc"]
+alloc = [
+    "curve25519-dalek/alloc",
+    "ed25519-dalek/alloc"
+]
 
-# The u32 backend uses u32s with u64 products.
-u32_backend = ["curve25519-dalek/u32_backend", "ed25519-dalek/u32_backend"]
-# The u64 backend uses u64s with u128 products.
-u64_backend = ["curve25519-dalek/u64_backend", "ed25519-dalek/u64_backend"]
-# The SIMD backend uses parallel formulas, using either AVX2 or AVX512-IFMA.
-simd_backend = ["curve25519-dalek/simd_backend", "ed25519-dalek/simd_backend"]
+std = [
+    "rand",
+    "getrandom"
+]
+
+force-alloc = []
+
+ac-heap = ["alloc"]
+
+fixed-heap = ["alloc"]
