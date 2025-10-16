@@ -27,6 +27,14 @@ mod dkg_benches {
     use std::env::consts::OS;
 
     use super::*;
+    use ctor::ctor;
+
+    #[cfg(any(feature = "alloc", feature = "force-alloc"))]
+    #[ctor]
+    fn init_allocator_before_tests() {
+        frost_dalek::init_heap();
+        println!("[ctor] custom allocator initialized before tests");
+    }
 
     fn participant_new(c: &mut Criterion) {
         let mut rng: OsRng = OsRng;
@@ -229,6 +237,22 @@ mod dkg_benches {
 
 mod sign_benches {
     use super::*;
+
+    fn bench_generate_commitment_share_lists(c: &mut Criterion) {
+        let mut rng = OsRng;
+
+        let participant_indices = [1];
+
+        c.bench_function("generate_commitment_share_lists_1_pair_per_party", |b| {
+            b.iter(|| {
+                for i in participant_indices {
+                    // Generate exactly one pair (public + secret commitment)
+                    let (_pub_commit, _sec_commit) =
+                        generate_commitment_share_lists(&mut rng, i, 1);
+                }
+            });
+        });
+    }
 
     fn partial_sign_3_out_of_5(c: &mut Criterion) {
         let mut rng: OsRng = OsRng;
@@ -719,6 +743,7 @@ mod sign_benches {
         name = sign_benches;
         config = Criterion::default();
         targets =
+            bench_generate_commitment_share_lists,
             partial_sign_3_out_of_5,
             signature_aggregation_3_out_of_5,
             verify_3_out_of_5,

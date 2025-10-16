@@ -14,7 +14,7 @@ build-desktop-fixed-heap: $(SRC) $(CARGO)
 	cargo build --release --locked --no-default-features --features "std,fixed-heap,force-alloc" --lib
 
 build-desktop-ac-heap: $(SRC) $(CARGO)
-	cargo build --release --locked --no-default-features --features "std,ac-heap,force-alloc" --nocapture --lib
+	cargo build --release --locked --no-default-features --features "std,ac-heap,force-alloc" --lib
 
 build-ac: $(SRC) $(CARGO)
 	cargo build --release --locked --target thumbv7em-none-eabi --no-default-features --features "alloc,ac-heap" --lib
@@ -24,14 +24,23 @@ $(BIN): $(SRC) $(CARGO)
 
 build-test: $(BIN)
 
-test-desktop: $(SRC) $(CARGO)
+test-desktop:
 	cargo test --locked --no-default-features --features "std"
 
-test-desktop-fixed-heap: $(SRC) $(CARGO)
+test-desktop-fixed-heap:
 	cargo test --locked --no-default-features --features "std,fixed-heap,force-alloc"
 
-test-desktop-ac-heap: $(SRC) $(CARGO)
+test-desktop-ac-heap:
 	cargo test --locked --no-default-features --features "std,ac-heap,force-alloc"
+
+bench-desktop:
+	cargo bench --bench dalek_benchmarks --locked --no-default-features --features "std"
+
+bench-desktop-fixed-heap:
+	cargo bench --bench dalek_benchmarks --locked --no-default-features --features "std,fixed-heap,force-alloc"
+
+bench-desktop-ac-heap:
+	    cargo bench --locked --no-default-features --features "std,ac-heap,force-alloc"
 
 run-test-fixed-heap: $(SRC) $(CARGO)
 	cargo build --release --locked --bin frost-cli --no-default-features --features "std,fixed-heap,force-alloc"
